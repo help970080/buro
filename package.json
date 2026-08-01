@@ -1,0 +1,12 @@
+{
+  "name": "buro-credia",
+  "version": "1.0.0",
+  "description": "Consulta de historial crediticio - LMV Credia via Moffin",
+  "main": "server.js",
+  "engines": { "node": ">=18" },
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.11.5"
+  }
+}
