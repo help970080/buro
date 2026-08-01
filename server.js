@@ -21,6 +21,7 @@ const express = require('express');
 const { Pool } = require('pg');
 const crypto = require('crypto');
 const path = require('path');
+const { calculaRFC, verificaRFC } = require('./rfc');
 
 const app = express();
 app.use(express.json({ limit: '12mb' }));
@@ -38,7 +39,11 @@ const IVR_TOKEN = process.env.IVR_TOKEN || '';
 const CACHE_DIAS = parseInt(process.env.CACHE_DIAS || '90', 10);
 
 if (!JWT_SECRET) {
-  console.error('FALTA JWT_SECRET. El server no arranca sin ella.');
+  console.error('FALTA la variable JWT_SECRET en Render. El server no arranca sin ella.');
+  process.exit(1);
+}
+if (!process.env.DATABASE_URL) {
+  console.error('FALTA la variable DATABASE_URL en Render. Cópiala de tu base de datos (Internal Database URL).');
   process.exit(1);
 }
 
@@ -329,6 +334,11 @@ app.post('/api/ine/leer', auth, async (req, res) => {
   }
 });
 
+/* ---------- RFC sugerido ---------- */
+app.post('/api/rfc', auth, (req, res) => {
+  res.json(calculaRFC(req.body || {}));
+});
+
 /* ---------- Solicitudes ---------- */
 app.post('/api/solicitudes', auth, async (req, res) => {
   try {
@@ -337,6 +347,12 @@ app.post('/api/solicitudes', auth, async (req, res) => {
     if (tel.length !== 10) return res.status(400).json({ error: 'El teléfono debe tener 10 dígitos.' });
     if (!normNombre(b.nombre) || !normNombre(b.apellido_p)) {
       return res.status(400).json({ error: 'Falta nombre y apellido paterno.' });
+    }
+    let rfc = (b.rfc || '').toUpperCase().trim();
+    if (!rfc) {
+      const c = calculaRFC({ nombre: b.nombre, apellido_p: b.apellido_p,
+        apellido_m: b.apellido_m, curp: b.curp, fecha_nac: b.fecha_nac });
+      if (c.rfc) rfc = c.rfc;
     }
     let folio;
     for (let i = 0; i < 12; i++) {
@@ -353,7 +369,7 @@ app.post('/api/solicitudes', auth, async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
       [folio, codigo, b.agencia || '', tel,
         normNombre(b.nombre), normNombre(b.apellido_p), normNombre(b.apellido_m),
-        (b.curp || '').toUpperCase().trim(), (b.rfc || '').toUpperCase().trim(), b.fecha_nac || '',
+        (b.curp || '').toUpperCase().trim(), rfc, b.fecha_nac || '',
         b.calle || '', b.colonia || '', b.municipio || '', b.estado_dom || '', (b.cp || '').replace(/\D/g, ''),
         req.user.u, exp]
     );
@@ -490,6 +506,11 @@ function authCliente(req, res, next) {
   next();
 }
 
+/* RFC sugerido para el cliente (requiere su sesión de folio) */
+app.post('/api/rfc-publico', authCliente, (req, res) => {
+  res.json(calculaRFC(req.body || {}));
+});
+
 app.post('/api/autorizar', authCliente, async (req, res) => {
   try {
     const b = req.body || {};
@@ -513,6 +534,11 @@ app.post('/api/autorizar', authCliente, async (req, res) => {
       fecha_nac: b.fecha_nac || '', calle: b.calle, colonia: b.colonia,
       municipio: b.municipio, estado_dom: b.estado_dom, cp: (b.cp || '').replace(/\D/g, '')
     };
+
+    if (!datos.rfc) {
+      const c = calculaRFC(datos);
+      if (c.rfc) datos.rfc = c.rfc;
+    }
 
     const vence = new Date();
     vence.setFullYear(vence.getFullYear() + 3);
@@ -810,4 +836,11 @@ initDB()
   .then(() => app.listen(PORT, () => {
     console.log('Buró LMV Credia escuchando en ' + PORT + (MOFFIN_MOCK ? ' [MODO SIMULADO]' : ' [PRODUCCIÓN]'));
   }))
-  .catch(e => { console.error('No arrancó:', e.message); process.exit(1); });
+  .catch(e => {
+    console.error('No arrancó. Error de base de datos:');
+    console.error('  mensaje:', e.message || '(sin mensaje)');
+    console.error('  código :', e.code || '(sin código)');
+    if (e.stack) console.error(e.stack);
+    console.error('Revisa DATABASE_URL en Render (usa la Internal Database URL de tu base).');
+    process.exit(1);
+  });
