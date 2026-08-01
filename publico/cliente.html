@@ -99,6 +99,9 @@
     </div>
     <label for="f_curp">CURP</label>
     <input id="f_curp" type="text" maxlength="18" autocapitalize="characters">
+    <label for="f_rfc">RFC <span style="font-weight:400;color:#6B7A88">(lo calculamos, corrígelo si es distinto)</span></label>
+    <input id="f_rfc" type="text" maxlength="13" autocapitalize="characters">
+    <div id="rfc_nota" style="font-size:12.5px;color:#6B7A88;margin-top:5px"></div>
     <label for="f_nac">Fecha de nacimiento</label>
     <input id="f_nac" type="date">
     <label for="f_calle">Calle y número</label>
@@ -172,6 +175,51 @@
   }
   soloNum($('folio')); soloNum($('codigo')); soloNum($('f_cp'));
 
+  function nota(t){ $('rfc_nota').textContent = t || ''; }
+
+  /* El RFC se arma con los 10 primeros de la CURP (son idénticos) */
+  function rfcDesdeCurp(){
+    if ($('f_rfc').dataset.tocado === '1') return;
+    var c = $('f_curp').value.trim().toUpperCase();
+    if (!/^[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z\d]\d$/.test(c)){
+      if (!$('f_rfc').value) nota('Escribe tu CURP completa y lo calculamos.');
+      return;
+    }
+    var actual = $('f_rfc').value.trim().toUpperCase();
+    if (actual && actual.substring(0,10) === c.substring(0,10)) return;
+    nota('Calculando...');
+    fetch('/api/rfc-publico',{
+      method:'POST',
+      headers:{'content-type':'application/json','authorization':'Bearer ' + tok},
+      body: JSON.stringify({
+        curp: c,
+        nombre: $('f_nombre').value,
+        apellido_p: $('f_ap').value,
+        apellido_m: $('f_am').value,
+        fecha_nac: $('f_nac').value
+      })
+    }).then(function(r){ return r.json(); })
+    .then(function(j){
+      if (j && j.rfc){
+        $('f_rfc').value = j.rfc;
+        nota('Lo calculamos a partir de tu CURP. Si el tuyo es distinto, corrígelo.');
+      } else {
+        nota('No pudimos calcularlo. Escríbelo si lo sabes, o déjalo vacío.');
+      }
+    }).catch(function(){ nota(''); });
+  }
+
+  var tCurp;
+  $('f_curp').addEventListener('input', function(){
+    this.value = this.value.toUpperCase();
+    clearTimeout(tCurp); tCurp = setTimeout(rfcDesdeCurp, 500);
+  });
+  $('f_rfc').addEventListener('input', function(){
+    this.value = this.value.toUpperCase();
+    this.dataset.tocado = '1';
+    nota('Estás usando tu propio RFC.');
+  });
+
   /* ---- Paso 1 ---- */
   $('btn1').addEventListener('click', function(){
     var f = $('folio').value, c = $('codigo').value;
@@ -193,6 +241,8 @@
       $('f_ap').value = d.apellido_p || '';
       $('f_am').value = d.apellido_m || '';
       $('f_curp').value = d.curp || '';
+      $('f_rfc').value = d.rfc || '';
+      if (d.rfc) nota('Lo calculamos a partir de tu CURP. Si el tuyo es distinto, corrígelo.');
       $('f_nac').value = d.fecha_nac || '';
       $('f_calle').value = d.calle || '';
       $('f_col').value = d.colonia || '';
@@ -283,6 +333,7 @@
       apellido_p: $('f_ap').value.trim(),
       apellido_m: $('f_am').value.trim(),
       curp: $('f_curp').value.trim().toUpperCase(),
+      rfc: $('f_rfc').value.trim().toUpperCase(),
       fecha_nac: $('f_nac').value,
       calle: $('f_calle').value.trim(),
       colonia: $('f_col').value.trim(),
