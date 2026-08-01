@@ -124,6 +124,13 @@
       <div><label for="n_nac">Fecha de nacimiento</label><input id="n_nac" type="date"></div>
       <div><label for="n_cp">Código postal</label><input id="n_cp" type="tel" maxlength="5"></div>
     </div>
+    <div class="rejilla">
+      <div>
+        <label for="n_rfc">RFC (se calcula solo)</label>
+        <input id="n_rfc" type="text" maxlength="13">
+        <div id="n_rfc_nota" style="font-size:12px;color:#6B7A88;margin-top:4px"></div>
+      </div>
+    </div>
     <div id="mnueva" class="msg"></div>
     <button id="bnueva" style="margin-top:16px">Crear solicitud</button>
   </section>
@@ -272,19 +279,53 @@
     fr.readAsDataURL(f);
   });
 
+  /* ---- RFC sugerido ---- */
+  function calculaRFCPanel(){
+    if ($('n_rfc').dataset.tocado === '1') return;
+    var c = $('n_curp').value.trim().toUpperCase();
+    var n = $('n_nombre').value.trim(), ap = $('n_ap').value.trim();
+    if (!c && !(n && ap && $('n_nac').value)) return;
+    api('/api/rfc', {method:'POST', body:{
+      curp: c, nombre: n, apellido_p: ap,
+      apellido_m: $('n_am').value, fecha_nac: $('n_nac').value
+    }}).then(function(j){
+      if (j.rfc){
+        $('n_rfc').value = j.rfc;
+        $('n_rfc_nota').textContent = j.confianza === 'alta'
+          ? 'Confianza alta: base tomada de la CURP.'
+          : 'Confianza media: calculado del nombre. Verifícalo.';
+      } else {
+        $('n_rfc_nota').textContent = j.error || '';
+      }
+    }).catch(function(){});
+  }
+  var tRFC;
+  ['n_curp','n_nombre','n_ap','n_am','n_nac'].forEach(function(id){
+    $(id).addEventListener('input', function(){
+      clearTimeout(tRFC); tRFC = setTimeout(calculaRFCPanel, 500);
+    });
+  });
+  $('n_rfc').addEventListener('input', function(){
+    this.value = this.value.toUpperCase();
+    this.dataset.tocado = '1';
+    $('n_rfc_nota').textContent = 'Capturado a mano.';
+  });
+
   /* ---- Crear ---- */
   $('bnueva').addEventListener('click', function(){
     msg('mnueva','');
     var cuerpo = {
       telefono: $('n_tel').value, agencia: $('n_agencia').value,
       nombre: $('n_nombre').value, apellido_p: $('n_ap').value, apellido_m: $('n_am').value,
-      curp: $('n_curp').value, fecha_nac: $('n_nac').value, cp: $('n_cp').value
+      curp: $('n_curp').value, fecha_nac: $('n_nac').value, cp: $('n_cp').value,
+      rfc: $('n_rfc').value
     };
     $('bnueva').disabled = true;
     api('/api/solicitudes', {method:'POST', body:cuerpo})
     .then(function(s){
       $('bnueva').disabled = false;
-      ['n_tel','n_agencia','n_nombre','n_ap','n_am','n_curp','n_nac','n_cp','n_ine'].forEach(function(x){ $(x).value=''; });
+      ['n_tel','n_agencia','n_nombre','n_ap','n_am','n_curp','n_nac','n_cp','n_ine','n_rfc'].forEach(function(x){ $(x).value=''; });
+      $('n_rfc').dataset.tocado = ''; $('n_rfc_nota').textContent = '';
       msg('mnueva','');
       muestraFolio(s);
       lista();
@@ -376,6 +417,7 @@
       var h = '<div class="dato"><span>Cliente</span><span>' + esc(nom) + '</span></div>' +
         '<div class="dato"><span>Teléfono</span><span>' + esc(s.telefono) + '</span></div>' +
         '<div class="dato"><span>CURP</span><span>' + esc(s.curp || '—') + '</span></div>' +
+        '<div class="dato"><span>RFC</span><span>' + esc(s.rfc || '—') + '</span></div>' +
         '<div class="dato"><span>Agencia</span><span>' + esc(s.agencia || '—') + '</span></div>' +
         '<div class="dato"><span>Estado</span><span><span class="pill ' + esc(s.estado) + '">' + esc(s.estado) + '</span></span></div>';
 
