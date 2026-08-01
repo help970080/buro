@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="es-MX">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel de buró · LMV Credia</title>
+<style>
+  :root{
+    --tinta:#12263A; --tinta-2:#2C4A63; --papel:#F7F5F0; --linea:#D8D2C6;
+    --sello:#8C1C13; --ok:#1E6F50; --aviso:#B0761A; --gris:#6B7A88;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--papel);color:var(--tinta);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  header{background:var(--tinta);color:#fff;padding:12px 18px;display:flex;
+    align-items:center;gap:14px;flex-wrap:wrap;position:sticky;top:0;z-index:20}
+  header .marca{font-weight:700;letter-spacing:.05em;font-size:14px}
+  header .cuota{margin-left:auto;font-size:13px;background:rgba(255,255,255,.13);
+    padding:6px 12px;border-radius:20px}
+  header .cuota b{font-size:15px}
+  header button{background:transparent;border:1px solid rgba(255,255,255,.4);color:#fff;
+    padding:6px 12px;border-radius:7px;cursor:pointer;font-size:13px;font-family:inherit}
+  main{max-width:1180px;margin:0 auto;padding:18px}
+  .tarjeta{background:#fff;border:1px solid var(--linea);border-radius:11px;padding:18px;margin-bottom:16px}
+  h1{font-size:19px;margin:0 0 4px}
+  h2{font-size:16px;margin:0 0 12px}
+  label{display:block;font-size:12px;font-weight:600;margin:11px 0 4px;color:var(--tinta-2)}
+  input,select,textarea{width:100%;padding:10px;font-size:15px;border:1.5px solid var(--linea);
+    border-radius:8px;font-family:inherit;background:#fff;color:var(--tinta)}
+  textarea{min-height:80px;resize:vertical}
+  button{padding:11px 18px;font-size:15px;font-weight:600;border:0;border-radius:8px;
+    background:var(--tinta);color:#fff;cursor:pointer;font-family:inherit}
+  button.claro{background:#fff;color:var(--tinta);border:1.5px solid var(--linea)}
+  button.chico{padding:6px 11px;font-size:13px}
+  button[disabled]{opacity:.5;cursor:default}
+  .rejilla{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+  .barra{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+  .barra input{max-width:280px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th{text-align:left;font-size:11px;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--gris);padding:8px 10px;border-bottom:2px solid var(--linea)}
+  td{padding:11px 10px;border-bottom:1px solid #EDE9E1;vertical-align:middle}
+  tr.clic{cursor:pointer}
+  tr.clic:hover{background:#FBFAF7}
+  .pill{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600}
+  .pill.nueva,.pill.abierta{background:#EDF0F3;color:var(--tinta-2)}
+  .pill.autorizada{background:#FDF3E2;color:var(--aviso)}
+  .pill.consultada{background:#E9F4EF;color:var(--ok)}
+  .pill.entregada{background:#E4EDF5;color:var(--tinta)}
+  .pill.error{background:#FDECEA;color:var(--sello)}
+  .sem{display:inline-block;width:13px;height:13px;border-radius:50%;vertical-align:-2px;margin-right:5px}
+  .sem.verde{background:var(--ok)} .sem.ambar{background:var(--aviso)} .sem.rojo{background:var(--sello)}
+  .msg{padding:11px;border-radius:8px;font-size:14px;margin:12px 0;display:none}
+  .msg.err{background:#FDECEA;color:var(--sello);border:1px solid #F0C4BF;display:block}
+  .msg.ok{background:#E9F4EF;color:var(--ok);border:1px solid #BFE0D1;display:block}
+  .capa{position:fixed;inset:0;background:rgba(18,38,58,.55);display:flex;
+    align-items:flex-start;justify-content:center;padding:24px;overflow-y:auto;z-index:40}
+  .capa .caja{background:#fff;border-radius:12px;padding:22px;max-width:660px;width:100%}
+  .dato{display:flex;justify-content:space-between;gap:14px;padding:7px 0;border-bottom:1px solid #F0EDE7;font-size:14px}
+  .dato span:first-child{color:var(--gris)}
+  .dato span:last-child{font-weight:600;text-align:right}
+  .folio-grande{font-size:34px;font-weight:800;letter-spacing:.16em;text-align:center;
+    padding:18px;background:#FBFAF7;border:2px dashed var(--linea);border-radius:11px;margin:14px 0}
+  .folio-grande small{display:block;font-size:12px;letter-spacing:.09em;color:var(--gris);
+    font-weight:600;margin-bottom:6px}
+  .oculto{display:none}
+  .aviso-sim{background:#FDF3E2;border:1px solid #EDD9AE;color:#7A5310;
+    padding:9px 14px;border-radius:8px;font-size:13px;margin-bottom:14px}
+  .vacio{text-align:center;padding:44px 20px;color:var(--gris)}
+  @media(max-width:760px){ .rejilla{grid-template-columns:1fr} .ocultar-cel{display:none} }
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login" class="capa">
+  <div class="caja" style="max-width:380px;margin-top:8vh">
+    <h1>Panel de buró</h1>
+    <p style="color:#6B7A88;font-size:14px;margin:0 0 4px">LMV Credia, S.A. de C.V.</p>
+    <label for="lu">Usuario</label>
+    <input id="lu" type="text" autocomplete="username">
+    <label for="lp">Contraseña</label>
+    <input id="lp" type="password" autocomplete="current-password">
+    <div id="mlogin" class="msg"></div>
+    <button id="blogin" style="width:100%;margin-top:16px">Entrar</button>
+  </div>
+</div>
+
+<header class="oculto" id="cab">
+  <div class="marca">BURÓ · LMV CREDIA</div>
+  <div class="cuota" id="cuota">—</div>
+  <button id="salir">Salir</button>
+</header>
+
+<main class="oculto" id="app">
+  <div id="avisoSim" class="aviso-sim oculto">
+    Modo simulado: las consultas no son reales y no se cobran. Se apaga con MOFFIN_MOCK=0 en Render.
+  </div>
+
+  <!-- NUEVA SOLICITUD -->
+  <section class="tarjeta">
+    <h2>Nueva solicitud</h2>
+    <div class="rejilla">
+      <div>
+        <label for="n_tel">Teléfono del cliente (10 dígitos)</label>
+        <input id="n_tel" type="tel" inputmode="numeric" maxlength="10">
+      </div>
+      <div>
+        <label for="n_agencia">Agencia</label>
+        <input id="n_agencia" type="text" placeholder="Quién lo solicita">
+      </div>
+      <div>
+        <label for="n_ine">Credencial de elector (opcional)</label>
+        <input id="n_ine" type="file" accept="image/*" style="padding:8px">
+      </div>
+    </div>
+    <div class="rejilla">
+      <div><label for="n_nombre">Nombre(s)</label><input id="n_nombre" type="text"></div>
+      <div><label for="n_ap">Apellido paterno</label><input id="n_ap" type="text"></div>
+      <div><label for="n_am">Apellido materno</label><input id="n_am" type="text"></div>
+    </div>
+    <div class="rejilla">
+      <div><label for="n_curp">CURP</label><input id="n_curp" type="text" maxlength="18"></div>
+      <div><label for="n_nac">Fecha de nacimiento</label><input id="n_nac" type="date"></div>
+      <div><label for="n_cp">Código postal</label><input id="n_cp" type="tel" maxlength="5"></div>
+    </div>
+    <div id="mnueva" class="msg"></div>
+    <button id="bnueva" style="margin-top:16px">Crear solicitud</button>
+  </section>
+
+  <!-- LISTA -->
+  <section class="tarjeta">
+    <div class="barra">
+      <h2 style="margin:0;flex:1">Solicitudes</h2>
+      <input id="buscar" type="text" placeholder="Nombre, folio, teléfono o CURP">
+      <select id="filtro" style="width:auto">
+        <option value="">Todas</option>
+        <option value="nueva">Nuevas</option>
+        <option value="abierta">Abiertas por el cliente</option>
+        <option value="autorizada">Autorizadas</option>
+        <option value="consultada">Consultadas</option>
+        <option value="entregada">Entregadas</option>
+        <option value="error">Con error</option>
+      </select>
+      <button class="claro chico" id="brefresca">Actualizar</button>
+      <button class="claro chico" id="bexporta">Exportar autorizaciones</button>
+    </div>
+    <div id="tabla"></div>
+  </section>
+</main>
+
+<!-- DETALLE -->
+<div id="detalle" class="capa oculto">
+  <div class="caja">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+      <h2 id="d_titulo" style="margin:0;flex:1"></h2>
+      <button class="claro chico" id="d_cerrar">Cerrar</button>
+    </div>
+    <div id="d_cuerpo"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  'use strict';
+  var tok = localStorage.getItem('buro_token') || '';
+  var actual = null;
+
+  function $(id){ return document.getElementById(id); }
+  function msg(caja, txt, clase){
+    var el = $(caja);
+    el.textContent = txt || '';
+    el.className = 'msg' + (txt ? ' ' + clase : '');
+  }
+  function esc(s){
+    return (s === null || s === undefined ? '' : String(s))
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function pesos(n){
+    if (n === null || n === undefined || n === '') return '—';
+    return '$' + Number(n).toLocaleString('es-MX',{minimumFractionDigits:2, maximumFractionDigits:2});
+  }
+  function fecha(f){
+    if(!f) return '—';
+    return new Date(f).toLocaleString('es-MX',{timeZone:'America/Mexico_City',
+      day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'});
+  }
+
+  function api(ruta, opciones){
+    var op = opciones || {};
+    op.headers = op.headers || {};
+    op.headers['authorization'] = 'Bearer ' + tok;
+    if (op.body && typeof op.body !== 'string'){
+      op.headers['content-type'] = 'application/json';
+      op.body = JSON.stringify(op.body);
+    }
+    return fetch(ruta, op).then(function(r){
+      if (r.status === 401){ salir(); throw new Error('Sesión expirada. Vuelve a entrar.'); }
+      return r.json().then(function(j){
+        if(!r.ok) throw new Error(j.error || 'Error del servidor');
+        return j;
+      });
+    });
+  }
+
+  function salir(){
+    localStorage.removeItem('buro_token');
+    tok = '';
+    $('login').classList.remove('oculto');
+    $('cab').classList.add('oculto');
+    $('app').classList.add('oculto');
+  }
+  $('salir').addEventListener('click', salir);
+
+  /* ---- Login ---- */
+  $('blogin').addEventListener('click', entrar);
+  $('lp').addEventListener('keydown', function(e){ if(e.key === 'Enter') entrar(); });
+
+  function entrar(){
+    msg('mlogin','');
+    fetch('/api/login',{
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({usuario: $('lu').value, pass: $('lp').value})
+    }).then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
+    .then(function(o){
+      if(!o.ok){ msg('mlogin', o.j.error || 'No se pudo entrar.', 'err'); return; }
+      tok = o.j.token;
+      localStorage.setItem('buro_token', tok);
+      arranca();
+    }).catch(function(){ msg('mlogin','No hay conexión con el servidor.','err'); });
+  }
+
+  function arranca(){
+    $('login').classList.add('oculto');
+    $('cab').classList.remove('oculto');
+    $('app').classList.remove('oculto');
+    cuota();
+    lista();
+    fetch('/api/health').then(function(r){ return r.json(); }).then(function(h){
+      if (h.mock) $('avisoSim').classList.remove('oculto');
+    }).catch(function(){});
+  }
+
+  function cuota(){
+    api('/api/cuota').then(function(c){
+      var t = '<b>' + c.usadas + '</b> / ' + c.incluidas + ' consultas · ' + c.mes;
+      if (c.excedidas > 0) t += ' · <b style="color:#FFD9A0">' + c.excedidas + ' extra</b>';
+      $('cuota').innerHTML = t;
+    }).catch(function(){});
+  }
+
+  /* ---- Lectura de INE ---- */
+  $('n_ine').addEventListener('change', function(){
+    var f = this.files && this.files[0];
+    if(!f) return;
+    msg('mnueva','Leyendo la credencial...','ok');
+    var fr = new FileReader();
+    fr.onload = function(){
+      api('/api/ine/leer', {method:'POST', body:{imagen: fr.result}})
+      .then(function(d){
+        if(d.nombre) $('n_nombre').value = d.nombre;
+        if(d.apellido_p) $('n_ap').value = d.apellido_p;
+        if(d.apellido_m) $('n_am').value = d.apellido_m;
+        if(d.curp) $('n_curp').value = d.curp;
+        if(d.fecha_nac) $('n_nac').value = d.fecha_nac;
+        if(d.cp) $('n_cp').value = d.cp;
+        msg('mnueva', d.curp_dudosa
+          ? 'Datos cargados. Revisa la CURP, no tiene el formato esperado.'
+          : 'Datos cargados. Revísalos antes de crear.', 'ok');
+      }).catch(function(e){ msg('mnueva', e.message, 'err'); });
+    };
+    fr.readAsDataURL(f);
+  });
+
+  /* ---- Crear ---- */
+  $('bnueva').addEventListener('click', function(){
+    msg('mnueva','');
+    var cuerpo = {
+      telefono: $('n_tel').value, agencia: $('n_agencia').value,
+      nombre: $('n_nombre').value, apellido_p: $('n_ap').value, apellido_m: $('n_am').value,
+      curp: $('n_curp').value, fecha_nac: $('n_nac').value, cp: $('n_cp').value
+    };
+    $('bnueva').disabled = true;
+    api('/api/solicitudes', {method:'POST', body:cuerpo})
+    .then(function(s){
+      $('bnueva').disabled = false;
+      ['n_tel','n_agencia','n_nombre','n_ap','n_am','n_curp','n_nac','n_cp','n_ine'].forEach(function(x){ $(x).value=''; });
+      msg('mnueva','');
+      muestraFolio(s);
+      lista();
+    }).catch(function(e){
+      $('bnueva').disabled = false;
+      msg('mnueva', e.message, 'err');
+    });
+  });
+
+  function muestraFolio(s){
+    actual = s.id;
+    $('d_titulo').textContent = 'Solicitud creada';
+    $('d_cuerpo').innerHTML =
+      '<p style="color:#6B7A88;margin:0 0 4px">Dile al cliente que entre a <b>buro.legaxia.uk</b> y capture:</p>' +
+      '<div class="folio-grande"><small>FOLIO</small>' + esc(s.folio) + '</div>' +
+      '<div class="folio-grande"><small>CÓDIGO</small>' + esc(s.codigo) + '</div>' +
+      '<p style="color:#6B7A88;font-size:13px">Vence en 72 horas. Cliente: <b>' +
+        esc([s.nombre,s.apellido_p,s.apellido_m].filter(Boolean).join(' ')) +
+        '</b> · Tel: ' + esc(s.telefono) + '</p>' +
+      '<button class="claro" id="bllamar" style="width:100%;margin-top:8px">Llamarle y dictarle el código</button>' +
+      '<div id="mllamar" class="msg"></div>';
+    $('detalle').classList.remove('oculto');
+    var b = $('bllamar');
+    if (b) b.addEventListener('click', function(){
+      b.disabled = true; b.textContent = 'Marcando...';
+      api('/api/solicitudes/' + actual + '/llamar', {method:'POST', body:{}})
+      .then(function(){ msg('mllamar','Llamada enviada. El cliente escuchará su folio y código.','ok'); })
+      .catch(function(e){ msg('mllamar', e.message, 'err'); })
+      .then(function(){ b.disabled = false; b.textContent = 'Llamarle y dictarle el código'; });
+    });
+  }
+
+  /* ---- Lista ---- */
+  function lista(){
+    var qs = '?estado=' + encodeURIComponent($('filtro').value) +
+             '&q=' + encodeURIComponent($('buscar').value);
+    api('/api/solicitudes' + qs).then(pinta).catch(function(e){
+      $('tabla').innerHTML = '<div class="vacio">' + esc(e.message) + '</div>';
+    });
+  }
+  $('brefresca').addEventListener('click', lista);
+  $('filtro').addEventListener('change', lista);
+  var tBusca;
+  $('buscar').addEventListener('input', function(){
+    clearTimeout(tBusca); tBusca = setTimeout(lista, 300);
+  });
+
+  function pinta(filas){
+    if(!filas.length){
+      $('tabla').innerHTML = '<div class="vacio">Todavía no hay solicitudes. Crea la primera arriba.</div>';
+      return;
+    }
+    var h = '<table><thead><tr><th>Folio</th><th>Cliente</th>' +
+      '<th class="ocultar-cel">Agencia</th><th>Estado</th><th>Score</th>' +
+      '<th class="ocultar-cel">Creada</th></tr></thead><tbody>';
+    filas.forEach(function(f){
+      var nom = [f.nombre, f.apellido_p, f.apellido_m].filter(Boolean).join(' ');
+      var sem = f.semaforo ? '<span class="sem ' + esc(f.semaforo) + '"></span>' : '';
+      h += '<tr class="clic" data-id="' + f.id + '">' +
+        '<td><b>' + esc(f.folio) + '</b></td>' +
+        '<td>' + sem + esc(nom) + '<br><span style="color:#6B7A88;font-size:12px">' + esc(f.telefono) + '</span></td>' +
+        '<td class="ocultar-cel">' + esc(f.agencia || '—') + '</td>' +
+        '<td><span class="pill ' + esc(f.estado) + '">' + esc(f.estado) + '</span></td>' +
+        '<td>' + (f.score ? '<b>' + f.score + '</b>' : '—') + '</td>' +
+        '<td class="ocultar-cel" style="color:#6B7A88;font-size:13px">' + fecha(f.creada) + '</td>' +
+        '</tr>';
+    });
+    h += '</tbody></table>';
+    $('tabla').innerHTML = h;
+    Array.prototype.forEach.call($('tabla').querySelectorAll('tr.clic'), function(tr){
+      tr.addEventListener('click', function(){ abre(tr.getAttribute('data-id')); });
+    });
+  }
+
+  /* ---- Detalle ---- */
+  $('d_cerrar').addEventListener('click', function(){
+    $('detalle').classList.add('oculto');
+  });
+
+  function abre(id){
+    actual = id;
+    api('/api/solicitudes/' + id).then(function(d){
+      var s = d.solicitud;
+      var c = d.consultas[0];
+      var a = d.autorizaciones[0];
+      var nom = [s.nombre, s.apellido_p, s.apellido_m].filter(Boolean).join(' ');
+      $('d_titulo').textContent = 'Folio ' + s.folio;
+
+      var h = '<div class="dato"><span>Cliente</span><span>' + esc(nom) + '</span></div>' +
+        '<div class="dato"><span>Teléfono</span><span>' + esc(s.telefono) + '</span></div>' +
+        '<div class="dato"><span>CURP</span><span>' + esc(s.curp || '—') + '</span></div>' +
+        '<div class="dato"><span>Agencia</span><span>' + esc(s.agencia || '—') + '</span></div>' +
+        '<div class="dato"><span>Estado</span><span><span class="pill ' + esc(s.estado) + '">' + esc(s.estado) + '</span></span></div>';
+
+      if (['nueva','abierta'].indexOf(s.estado) >= 0){
+        h += '<div class="folio-grande"><small>CÓDIGO PARA EL CLIENTE</small>' + esc(s.codigo) + '</div>' +
+             '<button class="claro" id="d_renovar" style="width:100%">Generar código nuevo</button>';
+      }
+
+      if (a){
+        h += '<h2 style="margin-top:20px">Autorización</h2>' +
+          '<div class="dato"><span>Firmada</span><span>' + fecha(a.aceptada) + '</span></div>' +
+          '<div class="dato"><span>Vigente hasta</span><span>' +
+            (a.vence ? String(a.vence).slice(0,10) : '—') + '</span></div>' +
+          '<div class="dato"><span>Desde IP</span><span>' + esc(a.ip || '—') + '</span></div>';
+        if (a.firma){
+          h += '<img alt="Firma del cliente" src="' + esc(a.firma) +
+               '" style="width:100%;max-width:320px;border:1px solid #D8D2C6;border-radius:8px;margin-top:10px;background:#fff">';
+        }
+      }
+
+      if (c){
+        h += '<h2 style="margin-top:20px">Consulta</h2>';
+        if (c.error){
+          h += '<div class="msg err" style="display:block">' + esc(c.error) + '</div>';
+        } else {
+          h += '<div class="dato"><span>Tipo</span><span>' + esc(c.tipo) + '</span></div>' +
+            '<div class="dato"><span>Score</span><span style="font-size:20px">' + (c.score || '—') + '</span></div>' +
+            '<div class="dato"><span>Fecha</span><span>' + fecha(c.consultada) + '</span></div>';
+          if (c.simulada) h += '<div class="aviso-sim">Consulta simulada o reutilizada. No se cobró.</div>';
+          if (c.resumen){
+            var r = c.resumen;
+            h += '<div class="dato"><span>Cuentas</span><span>' + (r.cuentas || 0) + '</span></div>' +
+              '<div class="dato"><span>Cuentas con atraso</span><span>' + (r.cuentas_atraso || 0) + '</span></div>' +
+              '<div class="dato"><span>Saldo total</span><span>' + pesos(r.saldo_total) + '</span></div>' +
+              '<div class="dato"><span>Alertas</span><span>' + (r.alertas || 0) + '</span></div>';
+          }
+        }
+      }
+
+      if (s.estado === 'autorizada' || s.estado === 'error' || (c && c.tipo === 'score')){
+        h += '<div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">' +
+          '<button id="d_score">Consultar score</button>' +
+          '<button class="claro" id="d_reporte">Reporte completo (cuesta más)</button></div>';
+      }
+
+      if (c && !c.error){
+        h += '<h2 style="margin-top:22px">Dictamen para la agencia</h2>' +
+          '<label for="d_sem">Semáforo</label>' +
+          '<select id="d_sem"><option value="verde">Verde — aprobar</option>' +
+          '<option value="ambar">Ámbar — con reservas</option>' +
+          '<option value="rojo">Rojo — no aprobar</option></select>' +
+          '<label for="d_monto">Monto sugerido (opcional)</label>' +
+          '<input id="d_monto" type="number" step="100">' +
+          '<label for="d_notas">Notas</label>' +
+          '<textarea id="d_notas" placeholder="Qué debe saber la agencia. No pegues el reporte."></textarea>' +
+          '<button id="d_guardar" style="width:100%;margin-top:14px">Guardar y generar enlace</button>';
+      }
+
+      if (d.dictamen && d.dictamen.token_agencia){
+        var url = location.origin + '/r/' + d.dictamen.token_agencia;
+        h += '<h2 style="margin-top:20px">Enlace para la agencia</h2>' +
+          '<input readonly value="' + esc(url) + '" id="d_url">' +
+          '<button class="claro" id="d_copiar" style="width:100%;margin-top:8px">Copiar enlace</button>';
+      }
+
+      h += '<div id="d_msg" class="msg"></div>';
+      $('d_cuerpo').innerHTML = h;
+      $('detalle').classList.remove('oculto');
+      conecta();
+    }).catch(function(e){ alert(e.message); });
+  }
+
+  function conecta(){
+    var r = $('d_renovar');
+    if (r) r.addEventListener('click', function(){
+      api('/api/solicitudes/' + actual + '/renovar', {method:'POST', body:{}})
+        .then(function(){ abre(actual); })
+        .catch(function(e){ msg('d_msg', e.message, 'err'); });
+    });
+
+    ['d_score','d_reporte'].forEach(function(bid){
+      var b = $(bid);
+      if(!b) return;
+      b.addEventListener('click', function(){
+        var tipo = bid === 'd_reporte' ? 'reporte' : 'score';
+        consulta(tipo, false);
+      });
+    });
+
+    var g = $('d_guardar');
+    if (g) g.addEventListener('click', function(){
+      g.disabled = true;
+      api('/api/solicitudes/' + actual + '/dictamen', {method:'POST', body:{
+        semaforo: $('d_sem').value,
+        monto_sugerido: $('d_monto').value,
+        notas: $('d_notas').value
+      }}).then(function(){ abre(actual); lista(); })
+      .catch(function(e){ g.disabled = false; msg('d_msg', e.message, 'err'); });
+    });
+
+    var cp = $('d_copiar');
+    if (cp) cp.addEventListener('click', function(){
+      var el = $('d_url');
+      el.select();
+      try { document.execCommand('copy'); msg('d_msg','Enlace copiado.','ok'); }
+      catch(e){ msg('d_msg','Copia el enlace a mano.','err'); }
+    });
+  }
+
+  function consulta(tipo, confirmado){
+    msg('d_msg','Consultando...','ok');
+    api('/api/solicitudes/' + actual + '/consultar', {method:'POST', body:{tipo:tipo, confirmado:confirmado}})
+    .then(function(){ cuota(); abre(actual); lista(); })
+    .catch(function(e){
+      if (/cuesta más|consultas del mes/i.test(e.message)){
+        if (confirm(e.message + '\n\n¿Continuar de todos modos?')) { consulta(tipo, true); return; }
+        msg('d_msg','');
+        return;
+      }
+      msg('d_msg', e.message, 'err');
+    });
+  }
+
+  /* ---- Exportar ---- */
+  $('bexporta').addEventListener('click', function(){
+    fetch('/api/export/autorizaciones', {headers:{'authorization':'Bearer ' + tok}})
+      .then(function(r){ return r.blob(); })
+      .then(function(b){
+        var u = URL.createObjectURL(b);
+        var a = document.createElement('a');
+        a.href = u; a.download = 'autorizaciones.csv';
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a); URL.revokeObjectURL(u);
+      }).catch(function(){ alert('No se pudo exportar.'); });
+  });
+
+  if (tok) arranca();
+})();
+</script>
+</body>
+</html>
