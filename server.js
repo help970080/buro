@@ -24,6 +24,7 @@ const path = require('path');
 const { calculaRFC, verificaRFC } = require('./rfc');
 const { resumeReporte, semaforoSugerido } = require('./buro');
 const { generaPDF } = require('./comprobante');
+const { generaReportePDF } = require('./reporte');
 
 const app = express();
 app.use(express.json({ limit: '12mb' }));
@@ -132,13 +133,23 @@ function normNombre(s) {
 const CURP_RE = /^[A-Z][AEIOUX][A-Z]{2}\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])[HM](AS|BC|BS|CC|CL|CM|CS|CH|DF|DG|GT|GR|HG|JC|MC|MN|MS|NT|NL|OC|PL|QT|QR|SP|SL|SR|TC|TS|TL|VZ|YN|ZS|NE)[B-DF-HJ-NP-TV-Z]{3}[A-Z\d]\d$/;
 
 /* ---------- Texto de autorización (Anexo A del contrato Moffin) ---------- */
-const TEXTO_AUTORIZACION = [
+const PARRAFOS_AUTORIZACION = [
   'Por este conducto autorizo expresamente a "Moffin Software, S.A.P.I. de C.V.", para que por conducto de sus funcionarios facultados lleve a cabo Investigaciones, sobre mi comportamiento crediticio o el de la sociedad que represento en o a través de las bases de datos de "Trans Union de México, S. A., SIC" y/o "Dun & Bradstreet, S.A., SIC".',
   'Asimismo, autorizo expresamente a "Moffin Software, S.A.P.I. de C.V." para que pueda consultar mi historial crediticio con "Trans Union de México, S.A., SIC" y "Dun & Bradstreet, S.A., SIC".',
   'Finalmente, autorizo expresamente para que "Moffin Software, S.A.P.I. de C.V." pueda compartir mis datos con "LMV CREDIA SA DE CV" (el "Usuario").',
   'Asimismo, declaro que conozco la naturaleza y alcance de la información que se solicitará, del uso que "Moffin Software, S.A.P.I. de C.V." hará de tal información y de que ésta podrá realizar consultas periódicas sobre mi historial, consintiendo que esta autorización se encuentre vigente por un período de 3 años contados a partir de su expedición y en todo caso durante el tiempo que se mantenga la relación jurídica entre el Titular de la Información y el Usuario.'
-].join('\n\n');
-const HASH_AUTORIZACION = crypto.createHash('sha256').update(TEXTO_AUTORIZACION).digest('hex');
+];
+
+function textoAutorizacion() {
+  return PARRAFOS_AUTORIZACION.join('\n\n');
+}
+
+function hashTexto(t) {
+  return crypto.createHash('sha256').update(t).digest('hex');
+}
+
+const TEXTO_AUTORIZACION = textoAutorizacion('');
+const HASH_AUTORIZACION = hashTexto(TEXTO_AUTORIZACION);
 
 /* ---------- Esquema ---------- */
 async function initDB() {
@@ -243,7 +254,7 @@ async function initDB() {
 
 /* ---------- Auth del equipo ---------- */
 function auth(req, res, next) {
-  const h = req.headers.authorization || '';
+  const h = req.headers.authorization || (req.query.t ? 'Bearer ' + req.query.t : '');
   const d = leeJWT(h.replace(/^Bearer\s+/i, ''));
   if (!d || d.t !== 'equipo') return res.status(401).json({ error: 'Sesión expirada. Vuelve a entrar.' });
   req.user = d;
@@ -503,7 +514,7 @@ app.post('/api/acceso', async (req, res) => {
         calle: s.calle, colonia: s.colonia, municipio: s.municipio,
         estado_dom: s.estado_dom, cp: s.cp
       },
-      texto: TEXTO_AUTORIZACION
+      texto: textoAutorizacion()
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -531,7 +542,7 @@ app.post('/api/solicitudes/:id/presencial', auth, async (req, res) => {
         calle: s.calle, colonia: s.colonia, municipio: s.municipio,
         estado_dom: s.estado_dom, cp: s.cp
       },
-      texto: TEXTO_AUTORIZACION
+      texto: textoAutorizacion()
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -797,12 +808,42 @@ app.post('/api/solicitudes/:id/dictamen', auth, async (req, res) => {
   }
 });
 
-/* Vista para la agencia: dictamen, nunca el reporte */
+/* Reporte de crédito en PDF. Interno. */
+async function datosReporte(solicitudId) {
+  const s = await q('SELECT * FROM buro_solicitudes WHERE id=$1', [solicitudId]);
+  if (!s.rows.length) return null;
+  const c = await q(
+    `SELECT * FROM buro_consultas WHERE solicitud_id=$1 AND error IS NULL
+     ORDER BY (tipo='reporte') DESC, id DESC LIMIT 1`, [solicitudId]);
+  if (!c.rows.length) return null;
+  return {
+    payload: c.rows[0].payload,
+    resumen: c.rows[0].resumen || resumeReporte(c.rows[0].payload),
+    solicitud: s.rows[0],
+    consultada: c.rows[0].consultada,
+    folio_bc: c.rows[0].folio_moffin
+  };
+}
+
+app.get('/api/solicitudes/:id/reporte.pdf', auth, async (req, res) => {
+  try {
+    const d = await datosReporte(req.params.id);
+    if (!d) return res.status(404).json({ error: 'Esta solicitud no tiene consulta registrada.' });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition',
+      'inline; filename="reporte-' + (d.solicitud.folio || req.params.id) + '.pdf"');
+    generaReportePDF(d, res);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* Vista para la agencia: solo el dictamen. El reporte no sale por aquí. */
 app.get('/api/dictamen/:token', async (req, res) => {
   try {
     const r = await q(
-      `SELECT d.semaforo, d.monto_sugerido, d.notas, d.creado, d.exp_agencia,
-              s.folio, s.nombre, s.apellido_p, s.apellido_m, s.agencia
+      `SELECT d.semaforo, d.monto_sugerido, d.notas, d.creado, d.exp_agencia, d.solicitud_id,
+              s.folio, s.nombre, s.apellido_p, s.apellido_m, s.agencia, s.curp, s.rfc
        FROM buro_dictamenes d JOIN buro_solicitudes s ON s.id=d.solicitud_id
        WHERE d.token_agencia=$1`, [req.params.token]);
     if (!r.rows.length) return res.status(404).json({ error: 'Este enlace no existe.' });
@@ -810,14 +851,58 @@ app.get('/api/dictamen/:token', async (req, res) => {
     if (d.exp_agencia && new Date(d.exp_agencia) < new Date()) {
       return res.status(410).json({ error: 'Este enlace ya venció. Pide uno nuevo.' });
     }
+    /* El detalle solo sale si el titular autorizó compartirlo con esta agencia */
+    const au = await q(
+      `SELECT texto FROM buro_autorizaciones WHERE solicitud_id=$1 ORDER BY id DESC LIMIT 1`,
+      [d.solicitud_id]);
+    const consintio = !!(au.rows.length && d.agencia &&
+      au.rows[0].texto.toUpperCase().indexOf(String(d.agencia).trim().toUpperCase()) >= 0);
+
+    let consulta = null;
+    if (consintio) {
+      const c = await q(
+        `SELECT tipo, score, resumen, consultada FROM buro_consultas
+         WHERE solicitud_id=$1 AND error IS NULL ORDER BY id DESC LIMIT 1`, [d.solicitud_id]);
+      if (c.rows.length) {
+        const x = c.rows[0];
+        const R = x.resumen || {};
+        consulta = {
+          tipo: x.tipo,
+          fecha: x.consultada,
+          score: x.score,
+          score_texto: R.score_texto || null,
+          cuentas: R.cuentas || 0,
+          cuentas_cerradas: R.cuentas_cerradas || 0,
+          cuentas_negativas: R.cuentas_negativas || 0,
+          cuentas_atraso: R.cuentas_atraso || 0,
+          historia_negativa: R.historia_negativa || 0,
+          saldo_total: R.saldo_total || 0,
+          saldo_revolvente: R.saldo_revolvente || 0,
+          saldo_fijos: R.saldo_fijos || 0,
+          vencido_total: R.vencido_total || 0,
+          pct_uso: (R.pct_uso === undefined ? null : R.pct_uso),
+          peor_mop: R.peor_mop || 0,
+          consultas_6m: R.consultas_6m || 0,
+          cuentas_cobranza: R.cuentas_cobranza || 0,
+          claves_graves: R.claves_graves || [],
+          banderas: R.banderas || [],
+          cuenta_mas_antigua: R.cuenta_mas_antigua || null,
+          razones: R.razones || []
+        };
+      }
+    }
+
     res.json({
       folio: d.folio,
       cliente: [d.nombre, d.apellido_p, d.apellido_m].filter(Boolean).join(' '),
+      rfc: d.rfc,
       agencia: d.agencia,
       semaforo: d.semaforo,
       monto_sugerido: d.monto_sugerido,
       notas: d.notas,
-      fecha: d.creado
+      fecha: d.creado,
+      consulta: consulta,
+      sin_consentimiento: !consintio
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
