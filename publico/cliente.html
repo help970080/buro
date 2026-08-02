@@ -120,6 +120,8 @@
     </div>
     <label for="f_edo">Estado</label>
     <input id="f_edo" type="text">
+    <label for="f_lugar">Ciudad donde firmas hoy</label>
+    <input id="f_lugar" type="text" placeholder="Ejemplo: Cuautla, Morelos">
     <div id="m2" class="msg"></div>
     <button id="btn2">Continuar</button>
   </section>
@@ -220,6 +222,38 @@
     nota('Estás usando tu propio RFC.');
   });
 
+  /* ---- Entrada presencial: el panel abre esta página con la sesión ya lista ---- */
+  function arrancaPresencial(){
+    var m = /[#&]p=([^&]+)/.exec(location.hash || '');
+    if (!m) return false;
+    try { history.replaceState(null, '', location.pathname); } catch(e){}
+    var carga;
+    try { carga = JSON.parse(decodeURIComponent(escape(atob(m[1])))); }
+    catch(e){ return false; }
+    if (!carga || !carga.token) return false;
+    tok = carga.token;
+    texto = carga.texto || '';
+    var d = carga.datos || {};
+    $('f_nombre').value = d.nombre || '';
+    $('f_ap').value = d.apellido_p || '';
+    $('f_am').value = d.apellido_m || '';
+    $('f_curp').value = d.curp || '';
+    $('f_rfc').value = d.rfc || '';
+    $('f_nac').value = d.fecha_nac || '';
+    $('f_calle').value = d.calle || '';
+    $('f_col').value = d.colonia || '';
+    $('f_mun').value = d.municipio || '';
+    $('f_edo').value = d.estado_dom || '';
+    $('f_cp').value = d.cp || '';
+    $('f_lugar').value = [d.municipio, d.estado_dom].filter(Boolean).join(', ');
+    $('legal').textContent = texto;
+    $('p1').classList.add('oculto');
+    document.querySelector('#p2 .paso').textContent = 'Paso 1 de 2';
+    document.querySelector('#p3 .paso').textContent = 'Paso 2 de 2';
+    ver('p2');
+    return true;
+  }
+
   /* ---- Paso 1 ---- */
   $('btn1').addEventListener('click', function(){
     var f = $('folio').value, c = $('codigo').value;
@@ -249,6 +283,7 @@
       $('f_mun').value = d.municipio || '';
       $('f_edo').value = d.estado_dom || '';
       $('f_cp').value = d.cp || '';
+      $('f_lugar').value = [d.municipio, d.estado_dom].filter(Boolean).join(', ');
       $('legal').textContent = texto;
       ver('p2');
     }).catch(function(){
@@ -340,6 +375,7 @@
       municipio: $('f_mun').value.trim(),
       estado_dom: $('f_edo').value.trim(),
       cp: $('f_cp').value.trim(),
+      lugar: $('f_lugar').value.trim(),
       firma: cv.toDataURL('image/png'),
       acepto: true
     };
@@ -357,6 +393,7 @@
       msg('m3','No hay conexión. Revisa tu internet e intenta otra vez.','err');
     });
   });
+  arrancaPresencial();
 })();
 </script>
 </body>
