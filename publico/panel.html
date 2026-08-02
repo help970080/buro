@@ -473,6 +473,8 @@
             '<div class="dato"><span>Score</span><span style="font-size:20px">' + (c.score || '—') + '</span></div>' +
             '<div class="dato"><span>Fecha</span><span>' + fecha(c.consultada) + '</span></div>';
           if (c.simulada) h += '<div class="aviso-sim">Consulta simulada o reutilizada. No se cobró.</div>';
+          h += '<button class="claro" id="d_reppdf" style="width:100%;margin-top:10px">Descargar reporte de crédito (PDF)</button>' +
+            '<div style="font-size:12px;color:#6B7A88;margin-top:6px">Uso interno. El enlace de la agencia solo muestra el dictamen.</div>';
           if (c.resumen){
             var r = c.resumen;
             if (r.score_texto && !c.score) h += '<div class="dato"><span>Nota del score</span><span>' + esc(r.score_texto) + '</span></div>';
@@ -544,6 +546,7 @@
       if (d.dictamen && d.dictamen.token_agencia){
         var url = location.origin + '/r/' + d.dictamen.token_agencia;
         h += '<h2 style="margin-top:20px">Enlace para la agencia</h2>' +
+          '<div style="font-size:12px;color:#6B7A88;margin-bottom:8px">Muestra semáforo, monto y notas. No incluye el reporte.</div>' +
           '<input readonly value="' + esc(url) + '" id="d_url">' +
           '<button class="claro" id="d_copiar" style="width:100%;margin-top:8px">Copiar enlace</button>';
       }
@@ -588,6 +591,11 @@
     if (pdf) pdf.addEventListener('click', function(){
       bajaArchivo('/api/solicitudes/' + actual + '/comprobante.pdf',
                   'autorizacion-' + actual + '.pdf');
+    });
+
+    var rp = $('d_reppdf');
+    if (rp) rp.addEventListener('click', function(){
+      window.open('/api/solicitudes/' + actual + '/reporte.pdf?t=' + encodeURIComponent(tok), '_blank');
     });
 
     var cp = $('d_copiar');
