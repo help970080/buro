@@ -22,6 +22,7 @@ const { Pool } = require('pg');
 const crypto = require('crypto');
 const path = require('path');
 const { calculaRFC, verificaRFC } = require('./rfc');
+const { resumeReporte, semaforoSugerido } = require('./buro');
 
 const app = express();
 app.use(express.json({ limit: '12mb' }));
@@ -183,9 +184,19 @@ async function initDB() {
     ip TEXT,
     agente TEXT,
     datos JSONB,
+    lugar TEXT,
+    telefono TEXT,
+    funcionario TEXT,
+    folio_bc TEXT,
+    fecha_consulta_bc DATE,
     aceptada TIMESTAMPTZ DEFAULT NOW(),
     vence DATE
   )`);
+  /* Columnas agregadas después del primer despliegue */
+  for (const col of ['lugar TEXT', 'telefono TEXT', 'funcionario TEXT',
+                     'folio_bc TEXT', 'fecha_consulta_bc DATE', 'modo TEXT']) {
+    await q('ALTER TABLE buro_autorizaciones ADD COLUMN IF NOT EXISTS ' + col);
+  }
 
   await q(`CREATE TABLE IF NOT EXISTS buro_consultas (
     id BIGSERIAL PRIMARY KEY,
@@ -498,11 +509,40 @@ app.post('/api/acceso', async (req, res) => {
   }
 });
 
+/* Modo presencial: el cliente está enfrente y firma en el celular del empleado.
+   El empleado abre esto desde su sesión; no hay folio ni código de por medio.
+   La sesión dura 20 minutos y sirve una sola vez. */
+app.post('/api/solicitudes/:id/presencial', auth, async (req, res) => {
+  try {
+    const r = await q('SELECT * FROM buro_solicitudes WHERE id=$1', [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'No existe esa solicitud.' });
+    const s = r.rows[0];
+    if (['autorizada', 'consultada', 'entregada'].indexOf(s.estado) >= 0) {
+      return res.status(409).json({ error: 'Esta solicitud ya fue autorizada.' });
+    }
+    await q('UPDATE buro_solicitudes SET estado=$1, actualizada=NOW() WHERE id=$2 AND estado=$3',
+      ['abierta', s.id, 'nueva']);
+    res.json({
+      token: firmaJWT({ t: 'cliente', s: s.id, p: 1 }, 0.34),
+      datos: {
+        nombre: s.nombre, apellido_p: s.apellido_p, apellido_m: s.apellido_m,
+        curp: s.curp, rfc: s.rfc, fecha_nac: s.fecha_nac,
+        calle: s.calle, colonia: s.colonia, municipio: s.municipio,
+        estado_dom: s.estado_dom, cp: s.cp
+      },
+      texto: TEXTO_AUTORIZACION
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 function authCliente(req, res, next) {
   const h = req.headers.authorization || '';
   const d = leeJWT(h.replace(/^Bearer\s+/i, ''));
   if (!d || d.t !== 'cliente') return res.status(401).json({ error: 'La sesión expiró. Vuelve a entrar con tu folio.' });
   req.sol = d.s;
+  req.presencial = d.p === 1;
   next();
 }
 
@@ -552,11 +592,15 @@ app.post('/api/autorizar', authCliente, async (req, res) => {
     );
 
     await q(
-      `INSERT INTO buro_autorizaciones(solicitud_id, texto_hash, texto, firma, ip, agente, datos, vence)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      `INSERT INTO buro_autorizaciones(solicitud_id, texto_hash, texto, firma, ip, agente, datos,
+        lugar, telefono, funcionario, modo, vence)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [req.sol, HASH_AUTORIZACION, TEXTO_AUTORIZACION, b.firma,
         (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString().split(',')[0].trim(),
         (req.headers['user-agent'] || '').slice(0, 300), JSON.stringify(datos),
+        (b.lugar || '').toString().slice(0, 120) || [datos.municipio, datos.estado_dom].filter(Boolean).join(', '),
+        s.rows[0].telefono || '', s.rows[0].creada_por || '',
+        req.presencial ? 'presencial' : 'remoto',
         vence.toISOString().slice(0, 10)]
     );
 
@@ -570,68 +614,74 @@ app.post('/api/autorizar', authCliente, async (req, res) => {
 });
 
 /* ---------- Moffin ---------- */
-function resumeReporte(payload) {
-  const out = { cuentas: 0, cuentas_atraso: 0, saldo_total: 0, peor_atraso: '', alertas: 0, consultas_6m: 0 };
-  try {
-    const p = payload && payload.return && payload.return.Personas && payload.return.Personas.Persona;
-    const per = Array.isArray(p) ? p[0] : p;
-    if (!per) return out;
-    const cts = (per.Cuentas && per.Cuentas.Cuenta) || [];
-    const lista = Array.isArray(cts) ? cts : [cts];
-    out.cuentas = lista.length;
-    lista.forEach(c => {
-      const venc = parseFloat(c.SaldoVencido || '0') || 0;
-      out.saldo_total += parseFloat(c.SaldoActual || '0') || 0;
-      if (venc > 0 || (parseInt(c.NumeroPagosVencidos || '0', 10) || 0) > 0) out.cuentas_atraso++;
-      if ((c.PeorAtraso || '') > out.peor_atraso) out.peor_atraso = c.PeorAtraso || '';
-    });
-    const rr = (per.ResumenReporte && per.ResumenReporte.ResumenReporte) || [];
-    const res0 = Array.isArray(rr) ? rr[0] : rr;
-    if (res0) out.consultas_6m = parseInt(res0.NumeroSolicitudesUltimos6Meses || '0', 10) || 0;
-    const hb = (per.HawkAlertBD && per.HawkAlertBD.HawkAlertBD) || [];
-    const hc = (per.HawkAlertConsulta && per.HawkAlertConsulta.HawkAlertConsulta) || [];
-    out.alertas = (Array.isArray(hb) ? hb.length : 0) + (Array.isArray(hc) ? hc.length : 0);
-  } catch (e) { /* resumen best-effort */ }
-  return out;
-}
 
-function scoreDePayload(payload) {
-  try {
-    const p = payload && payload.return && payload.return.Personas && payload.return.Personas.Persona;
-    const per = Array.isArray(p) ? p[0] : p;
-    const sc = per && per.ScoreBuroCredito && per.ScoreBuroCredito.ScoreBC;
-    const s0 = Array.isArray(sc) ? sc[0] : sc;
-    if (s0 && s0.ValorScore) return parseInt(s0.ValorScore, 10) || null;
-  } catch (e) { /* sin score */ }
-  if (payload && payload.score) return parseInt(payload.score, 10) || null;
-  return null;
-}
+/* RFCs del sandbox de Moffin. En sandbox el match es SOLO por RFC. */
+const RFC_PRUEBA = {
+  PRPU800101:    { score: 721, nota: 'Bueno: 7 cuentas al corriente, 20% de uso' },
+  PRPU800102:    { score: 721, nota: 'Igual que PRPU800101' },
+  PRPU800101R67: { score: 721, nota: 'Igual que PRPU800101' },
+  PRPU800101XX6: { score: 721, nota: 'Igual que PRPU800101' },
+  WWWW500122XX1: { score: 716, nota: 'Bueno: 17 cuentas, 31% de uso, sin vencido' },
+  WWWW500122XX2: { score: 654, nota: 'Regular: 82% de uso del limite' },
+  WWWW500122XX3: { score: 655, nota: 'Regular: 12 cuentas, 11% de uso' },
+  AESE500614JK2: { score: null, nota: 'MALO: cartera vencida 40,314, MOP 97' },
+  AESE500614JX1: { score: null, nota: 'Variante de cartera vencida' },
+  AESE500614JX2: { score: null, nota: 'Variante de cartera vencida' },
+  HEPE600122XX0: { score: null, nota: 'Sin score: 17 cuentas al corriente' },
+  HEPE60012222A: { score: null, nota: 'Sin score: 5 cuentas al corriente' },
+  DESCONOCIDO:   { score: null, nota: 'Persona no encontrada' }
+};
+
+app.get('/api/rfc-prueba', auth, (req, res) => {
+  res.json(Object.keys(RFC_PRUEBA).map(k => ({ rfc: k, nota: RFC_PRUEBA[k].nota })));
+});
 
 async function llamaMoffin(sol, tipo) {
   if (MOFFIN_MOCK || !MOFFIN_KEY) {
+    const rfc = (sol.rfc || '').toUpperCase();
+    const caso = RFC_PRUEBA[rfc];
     const semilla = parseInt((sol.curp || sol.folio || '0').replace(/\D/g, '').slice(-4) || '0', 10);
-    const score = 500 + (semilla % 300);
+    const score = caso ? caso.score : 500 + (semilla % 300);
     return {
       simulada: true,
-      payload: { simulado: true, score, aviso: 'Consulta simulada. No se cobró.' },
+      payload: {
+        simulado: true,
+        aviso: 'Consulta simulada. No se cobró.',
+        caso: caso ? caso.nota : 'Score generado al azar (RFC no es de prueba)',
+        return: { Personas: { Persona: [{
+          Nombre: { PrimerNombre: sol.nombre || '', ApellidoPaterno: sol.apellido_p || '',
+                    ApellidoMaterno: sol.apellido_m || '', RFC: rfc },
+          Cuentas: { Cuenta: [] },
+          ResumenReporte: { ResumenReporte: [{ NumeroCuentas: '0000' }] },
+          ScoreBuroCredito: score ? { ScoreBC: [{ ValorScore: String(score) }] } : null
+        }] } }
+      },
       folio_moffin: 'SIM-' + Date.now()
     };
   }
   const body = {
-    externalId: sol.folio,
+    reportType: 'PF',
     clientType: 'PF',
-    firstname: sol.nombre,
-    firstSurname: sol.apellido_p,
-    secondSurname: sol.apellido_m || '',
+    accountType: 'PF',
+    firstName: sol.nombre || '',
+    middleName: '',
+    firstLastName: sol.apellido_p || '',
+    secondLastName: sol.apellido_m || '',
+    birthdate: sol.fecha_nac || '',
     rfc: sol.rfc || '',
     curp: sol.curp || '',
     address: sol.calle || '',
     neighborhood: sol.colonia || '',
+    municipality: sol.municipio || '',
     city: sol.municipio || '',
     state: sol.estado_dom || '',
     postalCode: sol.cp || '',
-    country: 'MX'
+    zipCode: sol.cp || '',
+    country: 'MX',
+    nationality: 'MX',
+    externalId: sol.folio
   };
+
   const ruta = tipo === 'reporte' ? '/service-queries/buro-pf' : '/service-queries/buro-score-pf';
   const r = await fetch(MOFFIN_BASE + ruta, {
     method: 'POST',
@@ -680,8 +730,10 @@ async function consultarMoffin(solicitudId, tipo, opciones) {
 
   try {
     const out = await llamaMoffin(sol, tipo);
-    const score = scoreDePayload(out.payload);
-    const resumen = tipo === 'reporte' ? resumeReporte(out.payload) : null;
+    const lectura = resumeReporte(out.payload);
+    const score = lectura.score;
+    const resumen = Object.assign({}, lectura, semaforoSugerido(lectura));
+    delete resumen.error_lectura;
     await q(
       `INSERT INTO buro_consultas(solicitud_id, tipo, curp, rfc, score, resumen, payload, folio_moffin, simulada, mes)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
@@ -689,6 +741,8 @@ async function consultarMoffin(solicitudId, tipo, opciones) {
         resumen ? JSON.stringify(resumen) : null, JSON.stringify(out.payload),
         out.folio_moffin, out.simulada, mesMX()]);
     await q('UPDATE buro_solicitudes SET estado=$1, actualizada=NOW() WHERE id=$2', ['consultada', solicitudId]);
+    await q(`UPDATE buro_autorizaciones SET folio_bc=COALESCE(folio_bc,$1), fecha_consulta_bc=COALESCE(fecha_consulta_bc,$2)
+             WHERE solicitud_id=$3`, [out.folio_moffin || null, hoyMX(), solicitudId]);
     return { score, resumen, simulada: out.simulada };
   } catch (e) {
     await q(
@@ -776,16 +830,24 @@ app.get('/api/export/autorizaciones', auth, async (req, res) => {
     const hasta = req.query.hasta || '2999-12-31';
     const r = await q(
       `SELECT s.folio, s.nombre, s.apellido_p, s.apellido_m, s.curp, s.rfc, s.telefono,
+              s.calle, s.colonia, s.municipio, s.estado_dom, s.cp,
               a.aceptada, a.vence, a.ip, a.texto_hash, a.agente,
+              a.lugar, a.funcionario, a.folio_bc, a.fecha_consulta_bc, a.modo,
               (a.firma IS NOT NULL) AS con_firma
        FROM buro_autorizaciones a JOIN buro_solicitudes s ON s.id=a.solicitud_id
        WHERE a.aceptada::date BETWEEN $1 AND $2 ORDER BY a.id`, [desde, hasta]);
     const esc = v => '"' + (v === null || v === undefined ? '' : String(v)).replace(/"/g, '""') + '"';
     const cab = ['Folio', 'Nombre', 'Apellido paterno', 'Apellido materno', 'CURP', 'RFC', 'Teléfono',
-      'Fecha de autorización', 'Vence', 'IP', 'Hash del texto', 'Navegador', 'Con firma'];
+      'Calle y número', 'Colonia', 'Municipio', 'Estado', 'CP',
+      'Lugar de firma', 'Fecha de autorización', 'Vence', 'Con firma',
+      'Funcionario que recabó', 'Modo de firma', 'Folio de consulta BC', 'Fecha de consulta BC',
+      'IP', 'Hash del texto', 'Navegador'];
     const filas = r.rows.map(x => [x.folio, x.nombre, x.apellido_p, x.apellido_m, x.curp, x.rfc, x.telefono,
-      x.aceptada ? new Date(x.aceptada).toISOString() : '', x.vence ? x.vence.toISOString().slice(0, 10) : '',
-      x.ip, x.texto_hash, x.agente, x.con_firma ? 'Sí' : 'No'].map(esc).join(','));
+      x.calle, x.colonia, x.municipio, x.estado_dom, x.cp,
+      x.lugar, x.aceptada ? new Date(x.aceptada).toISOString() : '',
+      x.vence ? x.vence.toISOString().slice(0, 10) : '', x.con_firma ? 'Sí' : 'No',
+      x.funcionario, x.modo || 'remoto', x.folio_bc, x.fecha_consulta_bc ? x.fecha_consulta_bc.toISOString().slice(0, 10) : '',
+      x.ip, x.texto_hash, x.agente].map(esc).join(','));
     const csv = '\uFEFF' + [cab.map(esc).join(',')].concat(filas).join('\r\n');
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="autorizaciones.csv"');
