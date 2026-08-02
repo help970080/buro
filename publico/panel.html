@@ -150,7 +150,8 @@
         <option value="error">Con error</option>
       </select>
       <button class="claro chico" id="brefresca">Actualizar</button>
-      <button class="claro chico" id="bexporta">Exportar autorizaciones</button>
+      <button class="claro chico" id="bexporta">Exportar lista (CSV)</button>
+      <button class="claro chico" id="bexportapdf">Exportar comprobantes (PDF)</button>
     </div>
     <div id="tabla"></div>
   </section>
@@ -460,6 +461,7 @@
           h += '<img alt="Firma del cliente" src="' + esc(a.firma) +
                '" style="width:100%;max-width:320px;border:1px solid #D8D2C6;border-radius:8px;margin-top:10px;background:#fff">';
         }
+        h += '<button class="claro" id="d_pdf" style="width:100%;margin-top:10px">Descargar comprobante (PDF)</button>';
       }
 
       if (c){
@@ -582,6 +584,12 @@
       .catch(function(e){ g.disabled = false; msg('d_msg', e.message, 'err'); });
     });
 
+    var pdf = $('d_pdf');
+    if (pdf) pdf.addEventListener('click', function(){
+      bajaArchivo('/api/solicitudes/' + actual + '/comprobante.pdf',
+                  'autorizacion-' + actual + '.pdf');
+    });
+
     var cp = $('d_copiar');
     if (cp) cp.addEventListener('click', function(){
       var el = $('d_url');
@@ -606,16 +614,25 @@
   }
 
   /* ---- Exportar ---- */
-  $('bexporta').addEventListener('click', function(){
-    fetch('/api/export/autorizaciones', {headers:{'authorization':'Bearer ' + tok}})
-      .then(function(r){ return r.blob(); })
+  function bajaArchivo(ruta, nombre){
+    fetch(ruta, {headers:{'authorization':'Bearer ' + tok}})
+      .then(function(r){
+        if (!r.ok) return r.json().then(function(j){ throw new Error(j.error || 'No se pudo generar.'); });
+        return r.blob();
+      })
       .then(function(b){
         var u = URL.createObjectURL(b);
         var a = document.createElement('a');
-        a.href = u; a.download = 'autorizaciones.csv';
+        a.href = u; a.download = nombre;
         document.body.appendChild(a); a.click();
         document.body.removeChild(a); URL.revokeObjectURL(u);
-      }).catch(function(){ alert('No se pudo exportar.'); });
+      }).catch(function(e){ alert(e.message); });
+  }
+  $('bexporta').addEventListener('click', function(){
+    bajaArchivo('/api/export/autorizaciones', 'autorizaciones.csv');
+  });
+  $('bexportapdf').addEventListener('click', function(){
+    bajaArchivo('/api/export/comprobantes.pdf', 'autorizaciones.pdf');
   });
 
   if (tok) arranca();
