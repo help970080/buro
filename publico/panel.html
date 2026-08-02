@@ -345,9 +345,11 @@
       '<p style="color:#6B7A88;font-size:13px">Vence en 72 horas. Cliente: <b>' +
         esc([s.nombre,s.apellido_p,s.apellido_m].filter(Boolean).join(' ')) +
         '</b> · Tel: ' + esc(s.telefono) + '</p>' +
-      '<button class="claro" id="bllamar" style="width:100%;margin-top:8px">Llamarle y dictarle el código</button>' +
+      '<button id="bpresencial" style="width:100%;margin-top:14px">El cliente está aquí — que firme ahora</button>' +
+      '<button class="claro" id="bllamar" style="width:100%;margin-top:8px">No está: llamarle y dictarle el código</button>' +
       '<div id="mllamar" class="msg"></div>';
     $('detalle').classList.remove('oculto');
+    conectaPresencial();
     var b = $('bllamar');
     if (b) b.addEventListener('click', function(){
       b.disabled = true; b.textContent = 'Marcando...';
@@ -355,6 +357,25 @@
       .then(function(){ msg('mllamar','Llamada enviada. El cliente escuchará su folio y código.','ok'); })
       .catch(function(e){ msg('mllamar', e.message, 'err'); })
       .then(function(){ b.disabled = false; b.textContent = 'Llamarle y dictarle el código'; });
+    });
+  }
+
+  /* ---- Firma presencial: abre el formulario listo para que el cliente firme ---- */
+  function conectaPresencial(){
+    var b = $('bpresencial');
+    if (!b) return;
+    b.addEventListener('click', function(){
+      b.disabled = true; b.textContent = 'Abriendo...';
+      api('/api/solicitudes/' + actual + '/presencial', {method:'POST', body:{}})
+      .then(function(j){
+        b.disabled = false; b.textContent = 'El cliente está aquí — que firme ahora';
+        var carga = btoa(unescape(encodeURIComponent(JSON.stringify(j))));
+        window.open(location.origin + '/#p=' + carga, '_blank');
+      })
+      .catch(function(e){
+        b.disabled = false; b.textContent = 'El cliente está aquí — que firme ahora';
+        alert(e.message);
+      });
     });
   }
 
@@ -422,7 +443,10 @@
         '<div class="dato"><span>Estado</span><span><span class="pill ' + esc(s.estado) + '">' + esc(s.estado) + '</span></span></div>';
 
       if (['nueva','abierta'].indexOf(s.estado) >= 0){
-        h += '<div class="folio-grande"><small>CÓDIGO PARA EL CLIENTE</small>' + esc(s.codigo) + '</div>' +
+        h += '<button id="bpresencial" style="width:100%;margin-top:14px">El cliente está aquí — que firme ahora</button>' +
+             '<div class="folio-grande" style="margin-top:16px"><small>O DICTARLE POR TELÉFONO · FOLIO</small>' +
+             esc(s.folio) + '</div>' +
+             '<div class="folio-grande"><small>CÓDIGO</small>' + esc(s.codigo) + '</div>' +
              '<button class="claro" id="d_renovar" style="width:100%">Generar código nuevo</button>';
       }
 
@@ -449,10 +473,48 @@
           if (c.simulada) h += '<div class="aviso-sim">Consulta simulada o reutilizada. No se cobró.</div>';
           if (c.resumen){
             var r = c.resumen;
+            if (r.score_texto && !c.score) h += '<div class="dato"><span>Nota del score</span><span>' + esc(r.score_texto) + '</span></div>';
             h += '<div class="dato"><span>Cuentas</span><span>' + (r.cuentas || 0) + '</span></div>' +
               '<div class="dato"><span>Cuentas con atraso</span><span>' + (r.cuentas_atraso || 0) + '</span></div>' +
+              '<div class="dato"><span>Cuentas negativas</span><span>' + (r.cuentas_negativas || 0) + '</span></div>' +
               '<div class="dato"><span>Saldo total</span><span>' + pesos(r.saldo_total) + '</span></div>' +
-              '<div class="dato"><span>Alertas</span><span>' + (r.alertas || 0) + '</span></div>';
+              '<div class="dato"><span>Saldo VENCIDO</span><span' +
+                ((r.vencido_total > 0) ? ' style="color:#8C1C13"' : '') + '>' + pesos(r.vencido_total) + '</span></div>' +
+              (r.pct_uso !== null && r.pct_uso !== undefined
+                ? '<div class="dato"><span>Uso del límite</span><span>' + r.pct_uso + '%</span></div>' : '') +
+              '<div class="dato"><span>Peor atraso (MOP)</span><span>' + (r.peor_mop || 0) + '</span></div>' +
+              '<div class="dato"><span>Consultas 6 meses</span><span>' + (r.consultas_6m || 0) + '</span></div>';
+            if (r.defuncion){
+              h += '<div class="msg err" style="display:block"><b>ALERTA GRAVE:</b> Buró reporta fecha de defunción en este expediente. No continuar sin verificar identidad.</div>';
+            }
+            if (r.banderas && r.banderas.length){
+              h += '<div style="margin-top:12px;padding:12px;border-radius:9px;background:#FDF3E2;border:1px solid #EDD9AE">' +
+                '<b style="font-size:13px">Mensajes de alerta de Buró</b><ul style="margin:6px 0 0;padding-left:20px;font-size:13px">' +
+                r.banderas.map(function(b){
+                  return '<li' + (b.grave ? ' style="color:#8C1C13;font-weight:600"' : '') + '>' + esc(b.mensaje) + '</li>';
+                }).join('') + '</ul></div>';
+            }
+            if (r.cuentas_cobranza > 0 || r.consultas_cobranza > 0){
+              h += '<div class="msg err" style="display:block">Despacho de cobranza: ' +
+                   (r.cuentas_cobranza || 0) + ' cuenta(s), ' + (r.consultas_cobranza || 0) + ' consulta(s).</div>';
+            }
+            if (r.historia_negativa > 0){
+              h += '<div class="dato"><span>Al corriente hoy, con atrasos antes</span><span>' + r.historia_negativa + '</span></div>';
+            }
+            if (r.claves_graves && r.claves_graves.length){
+              h += '<div class="msg err" style="display:block">Cobranza judicial o cuenta irrecuperable: ' +
+                   esc(r.claves_graves.map(function(g){ return g.otorgante + ' (MOP ' + g.mop + ')'; }).join(', ')) + '</div>';
+            }
+            if (r.semaforo){
+              h += '<div style="margin-top:14px;padding:13px;border-radius:9px;background:#FBFAF7;border:1px solid #D8D2C6">' +
+                '<b><span class="sem ' + esc(r.semaforo) + '"></span>Sugerencia: ' + esc(r.semaforo.toUpperCase()) + '</b>' +
+                '<div style="font-size:13px;color:#6B7A88;margin-top:6px">' +
+                esc((r.razones || []).join(' · ')) + '</div></div>';
+            }
+            if (r.alertas && r.alertas.length){
+              h += '<div style="margin-top:10px;font-size:13px;color:#B0761A">Alertas de Buró: ' +
+                   esc(r.alertas.map(function(a){ return a.clave + ' ' + a.mensaje; }).join(' | ')) + '</div>';
+            }
           }
         }
       }
@@ -466,9 +528,10 @@
       if (c && !c.error){
         h += '<h2 style="margin-top:22px">Dictamen para la agencia</h2>' +
           '<label for="d_sem">Semáforo</label>' +
-          '<select id="d_sem"><option value="verde">Verde — aprobar</option>' +
-          '<option value="ambar">Ámbar — con reservas</option>' +
-          '<option value="rojo">Rojo — no aprobar</option></select>' +
+          '<select id="d_sem">' +
+          '<option value="verde"' + (c.resumen && c.resumen.semaforo==='verde' ? ' selected' : '') + '>Verde — aprobar</option>' +
+          '<option value="ambar"' + (c.resumen && c.resumen.semaforo==='ambar' ? ' selected' : '') + '>Ámbar — con reservas</option>' +
+          '<option value="rojo"' + (c.resumen && c.resumen.semaforo==='rojo' ? ' selected' : '') + '>Rojo — no aprobar</option></select>' +
           '<label for="d_monto">Monto sugerido (opcional)</label>' +
           '<input id="d_monto" type="number" step="100">' +
           '<label for="d_notas">Notas</label>' +
@@ -491,6 +554,7 @@
   }
 
   function conecta(){
+    conectaPresencial();
     var r = $('d_renovar');
     if (r) r.addEventListener('click', function(){
       api('/api/solicitudes/' + actual + '/renovar', {method:'POST', body:{}})
