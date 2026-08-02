@@ -23,6 +23,7 @@ const crypto = require('crypto');
 const path = require('path');
 const { calculaRFC, verificaRFC } = require('./rfc');
 const { resumeReporte, semaforoSugerido } = require('./buro');
+const { generaPDF } = require('./comprobante');
 
 const app = express();
 app.use(express.json({ limit: '12mb' }));
@@ -852,6 +853,44 @@ app.get('/api/export/autorizaciones', auth, async (req, res) => {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="autorizaciones.csv"');
     res.send(csv);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* Comprobante en PDF: una hoja por autorización.
+   Sin parámetros = solo esa solicitud. Con ?desde y ?hasta = lote. */
+const SQL_COMPROBANTE = `
+  SELECT s.folio, s.nombre, s.apellido_p, s.apellido_m, s.curp, s.rfc, s.telefono,
+         s.calle, s.colonia, s.municipio, s.estado_dom, s.cp, s.fecha_nac,
+         a.texto, a.texto_hash, a.firma, a.ip, a.aceptada, a.vence,
+         a.lugar, a.funcionario, a.modo, a.folio_bc, a.fecha_consulta_bc
+  FROM buro_autorizaciones a JOIN buro_solicitudes s ON s.id = a.solicitud_id`;
+
+app.get('/api/solicitudes/:id/comprobante.pdf', auth, async (req, res) => {
+  try {
+    const r = await q(SQL_COMPROBANTE + ' WHERE a.solicitud_id=$1 ORDER BY a.id DESC LIMIT 1',
+      [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Esta solicitud no tiene autorización firmada.' });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition',
+      'inline; filename="autorizacion-' + (r.rows[0].folio || req.params.id) + '.pdf"');
+    generaPDF(r.rows, res);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/export/comprobantes.pdf', auth, async (req, res) => {
+  try {
+    const desde = req.query.desde || '2000-01-01';
+    const hasta = req.query.hasta || '2999-12-31';
+    const r = await q(
+      SQL_COMPROBANTE + ' WHERE a.aceptada::date BETWEEN $1 AND $2 ORDER BY a.id LIMIT 150',
+      [desde, hasta]);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="autorizaciones.pdf"');
+    generaPDF(r.rows, res);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
