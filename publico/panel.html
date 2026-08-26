@@ -523,6 +523,8 @@
         }
       }
 
+      h += '<div id="d_revision"></div>';
+
       if (s.estado === 'autorizada' || s.estado === 'error' || (c && c.tipo === 'score')){
         h += '<div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">' +
           '<button id="d_score">Consultar score</button>' +
@@ -560,6 +562,19 @@
 
   function conecta(){
     conectaPresencial();
+    if ($('d_revision')){
+      api('/api/solicitudes/' + actual + '/revisar').then(function(v){
+        if (!$('d_revision')) return;
+        if (v.listo){
+          $('d_revision').innerHTML =
+            '<div class="msg ok" style="display:block">Los datos cumplen lo que pide Buró. Listo para consultar.</div>';
+        } else {
+          $('d_revision').innerHTML =
+            '<div class="msg err" style="display:block"><b>Antes de consultar, faltan:</b><br>' +
+            esc(v.faltan.join(' · ')) + '</div>';
+        }
+      }).catch(function(){});
+    }
     var r = $('d_renovar');
     if (r) r.addEventListener('click', function(){
       api('/api/solicitudes/' + actual + '/renovar', {method:'POST', body:{}})
