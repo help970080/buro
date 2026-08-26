@@ -506,8 +506,15 @@
               h += '<div class="dato"><span>Al corriente hoy, con atrasos antes</span><span>' + r.historia_negativa + '</span></div>';
             }
             if (r.claves_graves && r.claves_graves.length){
-              h += '<div class="msg err" style="display:block">Cobranza judicial o cuenta irrecuperable: ' +
-                   esc(r.claves_graves.map(function(g){ return g.otorgante + ' (MOP ' + g.mop + ')'; }).join(', ')) + '</div>';
+              h += '<div class="msg err" style="display:block"><b>Créditos con deterioro (' +
+                r.claves_graves.length + ')</b><ul style="margin:6px 0 0;padding-left:18px">' +
+                r.claves_graves.map(function(g){
+                  var t = esc(g.otorgante || 'Sin nombre');
+                  if (g.mop) t += ' — MOP ' + g.mop + (g.actual ? ' (situación actual)' : ' (histórico)');
+                  if (g.observacion_texto) t += ' — ' + esc(g.observacion_texto);
+                  if (g.vencido > 0) t += ' — vencido ' + pesos(g.vencido);
+                  return '<li>' + t + '</li>';
+                }).join('') + '</ul></div>';
             }
             if (r.semaforo){
               h += '<div style="margin-top:14px;padding:13px;border-radius:9px;background:#FBFAF7;border:1px solid #D8D2C6">' +
