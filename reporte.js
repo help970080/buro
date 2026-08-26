@@ -22,7 +22,7 @@ const TIPO_CONTRATO = {
   BC: 'Banca comercial', BL: 'Bote/lancha', BR: 'Bienes raíces', CA: 'Compra de automóvil',
   CC: 'Tarjeta de crédito', CF: 'Crédito fiscal', CO: 'Consolidación', CP: 'Crédito personal',
   ED: 'Educativo', EQ: 'Equipo', FF: 'Fondeo', FI: 'Fianza', GS: 'Gasolina',
-  HB: 'Hipotecario bancario', HE: 'Hipotecario', HV: 'Hipotecario vivienda',
+  UK: 'Desconocido', ZZ: 'Desconocido', HB: 'Hipotecario bancario', HE: 'Hipotecario', HV: 'Hipotecario vivienda',
   LC: 'Línea de crédito', MI: 'Misceláneas', NG: 'Negocio', PB: 'Préstamo bancario',
   PC: 'Préstamo bancario', PE: 'Préstamo estudiantil', PG: 'Préstamo gubernamental',
   PL: 'Préstamo personal', PM: 'Préstamo empresarial', PQ: 'Préstamo quirografario',
@@ -307,7 +307,8 @@ function generaReportePDF(datos, salida) {
     emp.slice(0, 5).forEach(function (e) {
       let t = e.NombreEmpresa || '—';
       if (e.Cargo) t += ' · ' + e.Cargo;
-      if (e.Salario && entero(e.Salario) > 1) t += ' · Salario reportado ' + pesos(monto(e.Salario));
+      const sal = monto(e.Salario);
+      if (sal > 100) t += ' · Salario reportado ' + pesos(sal);
       doc.fillColor(TINTA).text('• ' + t, M + 4, y, { width: ANCHO - 90 });
       doc.fillColor(GRIS).fontSize(6.5)
         .text('Reportado ' + fecha(e.FechaReportoEmpleo), M + ANCHO - 82, y, { width: 82 });
