@@ -74,12 +74,47 @@ function peorMOP(cuentas) {
   return peor;
 }
 
+/* Claves de observación que Buró marca como deterioro del crédito */
+const OBSERVACION = {
+  LC: 'Quita otorgada por el otorgante',
+  CV: 'Cartera vendida a un tercero',
+  FN: 'Fraude cometido por el consumidor',
+  FD: 'Cuenta fraudulenta',
+  CO: 'Cuenta en cobranza',
+  UP: 'Cuenta en proceso de cobranza',
+  PC: 'Pago menor al acordado',
+  DA: 'Dación en pago',
+  AD: 'Adjudicación del bien',
+  RA: 'Cuenta reestructurada por adjudicación',
+  RF: 'Reestructura por fenómeno natural',
+  CL: 'Cuenta cerrada',
+  CC: 'Cuenta cancelada',
+  CZ: 'Cuenta cerrada con saldo cero',
+  RE: 'Cuenta reestructurada',
+  RV: 'Cuenta reestructurada vencida',
+  CM: 'Cuenta con morosidad histórica',
+  NA: 'Cuenta no aplicable'
+};
+const OBS_GRAVE = ['LC', 'CV', 'FN', 'FD', 'CO', 'UP', 'PC', 'DA', 'AD', 'RA'];
+
+/* MOP 96/97/99 puede venir en el histórico O en la forma de pago actual */
 function tieneClaveGrave(cuentas) {
   const graves = [];
   cuentas.forEach(c => {
-    const m = entero(c.MopHistoricoMorosidadMasGrave);
-    if (m === 96 || m === 97 || m === 99) {
-      graves.push({ otorgante: c.NombreOtorgante || '', mop: m });
+    const hist = entero(c.MopHistoricoMorosidadMasGrave);
+    const act = entero(c.FormaPagoActual);
+    const mop = [96, 97, 99].indexOf(act) >= 0 ? act
+      : ([96, 97, 99].indexOf(hist) >= 0 ? hist : 0);
+    const obs = String(c.ClaveObservacion || '').toUpperCase();
+    if (mop || OBS_GRAVE.indexOf(obs) >= 0) {
+      graves.push({
+        otorgante: c.NombreOtorgante || '',
+        mop: mop || null,
+        observacion: obs || null,
+        observacion_texto: OBSERVACION[obs] || null,
+        vencido: monto(c.SaldoVencido),
+        actual: act === 96 || act === 97 || act === 99
+      });
     }
   });
   return graves;
@@ -215,16 +250,26 @@ function semaforoSugerido(r) {
     razones.push(r.cuentas_cobranza + ' cuenta(s) en despacho de cobranza');
     sem = 'rojo';
   }
-  if (r.mop96 + r.mop97 + r.mop99 > 0) {
-    razones.push('Créditos con MOP 96/97/99 (fraude, cobranza judicial o irrecuperable)');
-    sem = 'rojo';
-  }
+  if (r.mop96 > 0) { razones.push(r.mop96 + ' crédito(s) marcados como fraude'); sem = 'rojo'; }
+  if (r.mop97 > 0) { razones.push(r.mop97 + ' crédito(s) en cobranza judicial'); sem = 'rojo'; }
+  if (r.mop99 > 0) { razones.push(r.mop99 + ' crédito(s) considerados irrecuperables'); sem = 'rojo'; }
   if (r.historia_negativa > 0) {
     razones.push(r.historia_negativa + ' cuenta(s) hoy al corriente pero con atrasos en su historia');
     if (sem === 'verde') sem = 'ambar';
   }
   if (r.claves_graves && r.claves_graves.length) {
-    razones.push('Cuenta con clave de cobranza judicial o irrecuperable');
+    const quitas = r.claves_graves.filter(g => g.observacion === 'LC');
+    const vendidas = r.claves_graves.filter(g => g.observacion === 'CV');
+    const fraude = r.claves_graves.filter(g => g.observacion === 'FN' || g.observacion === 'FD');
+    const judicial = r.claves_graves.filter(g => g.mop === 97 || g.mop === 99);
+    const yaContado = (r.mop96 + r.mop97 + r.mop99) > 0;
+    if (fraude.length && !yaContado) razones.push('Cuenta marcada como fraude en Buró');
+    if (judicial.length && !yaContado) razones.push(judicial.length + ' crédito(s) en cobranza judicial');
+    if (quitas.length) razones.push(quitas.length + ' crédito(s) con quita: el otorgante perdonó parte de la deuda');
+    if (vendidas.length) razones.push(vendidas.length + ' crédito(s) con cartera vendida a un despacho');
+    if (!fraude.length && !judicial.length && !quitas.length && !vendidas.length && !yaContado) {
+      razones.push('Cuentas con clave de observación de deterioro');
+    }
     sem = 'rojo';
   }
   if (r.vencido_total > 0) {
@@ -250,7 +295,10 @@ function semaforoSugerido(r) {
     razones.push('Sin score de Buró');
     if (sem === 'verde') sem = 'ambar';
   }
-  if (r.pct_uso !== null && r.pct_uso >= 80) {
+  if (r.pct_uso !== null && r.pct_uso > 100) {
+    razones.push('Sobregirado: usa el ' + r.pct_uso + '% de su límite de crédito');
+    sem = 'rojo';
+  } else if (r.pct_uso !== null && r.pct_uso >= 80) {
     razones.push('Usa el ' + r.pct_uso + '% de su límite de crédito');
     if (sem === 'verde') sem = 'ambar';
   }
@@ -263,4 +311,4 @@ function semaforoSugerido(r) {
   return { semaforo: sem, razones: razones };
 }
 
-module.exports = { resumeReporte, semaforoSugerido, monto, entero, fechaBuro, leeMensajesAlerta, POS_ALERTA };
+module.exports = { resumeReporte, semaforoSugerido, monto, entero, fechaBuro, leeMensajesAlerta, POS_ALERTA, OBSERVACION };
