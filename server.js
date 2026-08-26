@@ -51,8 +51,10 @@ if (!process.env.DATABASE_URL) {
 }
 
 const MOFFIN_BASE = MOFFIN_ENV === 'produccion'
-  ? 'https://api.moffin.mx/api/v1'
+  ? 'https://app.moffin.mx/api/v1'
   : 'https://sandbox.moffin.mx/api/v1';
+/* Código de producto de Buró (opcional). Se cambia desde Render. */
+const MOFFIN_PRODUCTO = process.env.MOFFIN_PRODUCTO || '';
 
 /* ---------- Postgres ---------- */
 const pool = new Pool({
@@ -150,6 +152,43 @@ function hashTexto(t) {
 
 const TEXTO_AUTORIZACION = textoAutorizacion('');
 const HASH_AUTORIZACION = hashTexto(TEXTO_AUTORIZACION);
+
+/* ---------- Estados: la API exige clave ISO 3166-2:MX de 3 letras ---------- */
+const ESTADOS_VALIDOS = ['AGU','BCN','BCS','CAM','CHP','CHH','CMX','COA','COL','DUR','GUA','GRO',
+  'HID','JAL','MEX','MIC','MOR','NAY','NLE','OAX','PUE','QUE','ROO','SLP','SIN','SON','TAB','TAM',
+  'TLA','VER','YUC','ZAC'];
+
+const ESTADOS = {
+  AGUASCALIENTES: 'AGU', 'BAJA CALIFORNIA': 'BCN', 'BAJA CALIFORNIA SUR': 'BCS',
+  CAMPECHE: 'CAM', CHIAPAS: 'CHP', CHIHUAHUA: 'CHH',
+  'CIUDAD DE MEXICO': 'CMX', CDMX: 'CMX', 'DISTRITO FEDERAL': 'CMX', DF: 'CMX',
+  COAHUILA: 'COA', 'COAHUILA DE ZARAGOZA': 'COA', COLIMA: 'COL', DURANGO: 'DUR',
+  GUANAJUATO: 'GUA', GUERRERO: 'GRO', HIDALGO: 'HID', JALISCO: 'JAL',
+  'ESTADO DE MEXICO': 'MEX', MEXICO: 'MEX', EDOMEX: 'MEX',
+  MICHOACAN: 'MIC', 'MICHOACAN DE OCAMPO': 'MIC', MORELOS: 'MOR', NAYARIT: 'NAY',
+  'NUEVO LEON': 'NLE', OAXACA: 'OAX', PUEBLA: 'PUE', QUERETARO: 'QUE',
+  'QUINTANA ROO': 'ROO', 'SAN LUIS POTOSI': 'SLP', SINALOA: 'SIN', SONORA: 'SON',
+  TABASCO: 'TAB', TAMAULIPAS: 'TAM', TLAXCALA: 'TLA',
+  VERACRUZ: 'VER', 'VERACRUZ DE IGNACIO DE LA LLAVE': 'VER', YUCATAN: 'YUC', ZACATECAS: 'ZAC'
+};
+
+function claveEstado(v) {
+  const t = normNombre(v);
+  if (!t) return '';
+  if (ESTADOS_VALIDOS.indexOf(t) >= 0) return t;
+  if (ESTADOS[t]) return ESTADOS[t];
+  const k = Object.keys(ESTADOS).find(x => x.indexOf(t) === 0 || t.indexOf(x) === 0);
+  return k ? ESTADOS[k] : '';
+}
+
+/* La API rechaza caracteres fuera de su patrón */
+function limpiaTexto(v, conNumeros) {
+  let t = (v || '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  t = conNumeros
+    ? t.replace(/[^A-Za-z0-9nN&.\-\s,()\/]/g, ' ')
+    : t.replace(/[^A-Za-znN'\s.\-]/g, ' ');
+  return t.replace(/\s+/g, ' ').trim().slice(0, 256);
+}
 
 /* ---------- Esquema ---------- */
 async function initDB() {
@@ -671,30 +710,44 @@ async function llamaMoffin(sol, tipo) {
       folio_moffin: 'SIM-' + Date.now()
     };
   }
+  const edo = claveEstado(sol.estado_dom);
+  if (!edo) {
+    const e = new Error('El estado "' + (sol.estado_dom || '(vacío)') +
+      '" no es válido para Buró. Corrígelo, por ejemplo: Morelos.');
+    e.datos = true;
+    throw e;
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(sol.fecha_nac || '')) {
+    const e = new Error('Falta la fecha de nacimiento del cliente. Buró la exige.');
+    e.datos = true;
+    throw e;
+  }
+
   const body = {
-    reportType: 'PF',
-    clientType: 'PF',
-    accountType: 'PF',
-    firstName: sol.nombre || '',
-    middleName: '',
-    firstLastName: sol.apellido_p || '',
-    secondLastName: sol.apellido_m || '',
-    birthdate: sol.fecha_nac || '',
-    rfc: sol.rfc || '',
-    curp: sol.curp || '',
-    address: sol.calle || '',
-    neighborhood: sol.colonia || '',
-    municipality: sol.municipio || '',
-    city: sol.municipio || '',
-    state: sol.estado_dom || '',
-    postalCode: sol.cp || '',
-    zipCode: sol.cp || '',
+    firstName: limpiaTexto(sol.nombre),
+    firstLastName: limpiaTexto(sol.apellido_p),
+    secondLastName: limpiaTexto(sol.apellido_m),
+    rfc: (sol.rfc || '').toUpperCase().trim(),
+    birthdate: sol.fecha_nac,
+    address: limpiaTexto(sol.calle, true),
+    neighborhood: limpiaTexto(sol.colonia, true),
+    municipality: limpiaTexto(sol.municipio, true),
+    city: limpiaTexto(sol.municipio, true),
+    state: edo,
+    zipCode: (sol.cp || '').replace(/\D/g, '').slice(0, 5),
     country: 'MX',
     nationality: 'MX',
-    externalId: sol.folio
+    externalId: String(sol.folio || '')
   };
+  if (sol.curp) body.curp = sol.curp.toUpperCase().trim();
+  if (sol.telefono) body.phone = sol.telefono.replace(/\D/g, '');
+  if (tipo === 'reporte') {
+    if (MOFFIN_PRODUCTO) body.productType = MOFFIN_PRODUCTO;
+  } else {
+    delete body.secondLastName;   /* Prospector no lo acepta */
+  }
 
-  const ruta = tipo === 'reporte' ? '/service-queries/buro-pf' : '/service-queries/buro-score-pf';
+  const ruta = tipo === 'reporte' ? '/query/bureau_pf' : '/query/prospector_pf';
   const r = await fetch(MOFFIN_BASE + ruta, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'Authorization': 'Token ' + MOFFIN_KEY },
@@ -704,11 +757,30 @@ async function llamaMoffin(sol, tipo) {
   let data;
   try { data = JSON.parse(txt); } catch (e) { data = { crudo: txt.slice(0, 4000) }; }
   if (!r.ok) {
-    const err = new Error('Moffin ' + r.status + ': ' + txt.slice(0, 300));
+    let msg = 'Moffin respondió ' + r.status;
+    if (r.status === 400 && data.message) msg = 'Datos rechazados: ' + String(data.message).slice(0, 300);
+    else if (r.status === 401) msg = 'La llave de Moffin no es válida o venció.';
+    else if (r.status === 429) msg = 'Se alcanzó el límite de consultas de la cuenta Moffin.';
+    else if (r.status === 502 || r.status === 504) msg = 'Moffin no respondió a tiempo. Vuelve a intentar.';
+    else if (data.message) msg += ': ' + String(data.message).slice(0, 250);
+    const err = new Error(msg);
     err.http = r.status;
     throw err;
   }
-  return { simulada: false, payload: data, folio_moffin: (data && (data.id || data.queryId)) || null };
+
+  if (data.status === 'FAIL') {
+    const err = new Error('Buró no completó la consulta' +
+      (data.state && data.state.message ? ': ' + String(data.state.message).slice(0, 200) : '.'));
+    throw err;
+  }
+
+  /* La respuesta viene envuelta: { id, uuid, status, response: {...} } */
+  return {
+    simulada: false,
+    payload: data.response || data,
+    folio_moffin: data.id ? String(data.id) : (data.uuid || null),
+    pendiente: data.status === 'PENDING'
+  };
 }
 
 async function consultarMoffin(solicitudId, tipo, opciones) {
@@ -765,9 +837,51 @@ async function consultarMoffin(solicitudId, tipo, opciones) {
   }
 }
 
+/* Revisa que los datos pasen las reglas de Moffin, sin gastar consulta */
+function revisaDatos(sol) {
+  const faltan = [];
+  if (!normNombre(sol.nombre)) faltan.push('nombre');
+  if (!normNombre(sol.apellido_p)) faltan.push('apellido paterno');
+  if (!normNombre(sol.apellido_m)) faltan.push('apellido materno (Buró lo exige para el reporte)');
+  if (!(sol.rfc || '').trim()) faltan.push('RFC');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(sol.fecha_nac || '')) faltan.push('fecha de nacimiento');
+  if (!(sol.calle || '').trim()) faltan.push('calle y número');
+  if (!(sol.colonia || '').trim()) faltan.push('colonia');
+  if (!(sol.municipio || '').trim()) faltan.push('municipio');
+  if (!claveEstado(sol.estado_dom)) faltan.push('estado (no se reconoce "' + (sol.estado_dom || '') + '")');
+  const cp = (sol.cp || '').replace(/\D/g, '');
+  if (cp.length !== 5) faltan.push('código postal de 5 dígitos');
+  return faltan;
+}
+
+app.get('/api/solicitudes/:id/revisar', auth, async (req, res) => {
+  try {
+    const r = await q('SELECT * FROM buro_solicitudes WHERE id=$1', [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'No existe esa solicitud.' });
+    const faltan = revisaDatos(r.rows[0]);
+    res.json({
+      listo: faltan.length === 0,
+      faltan: faltan,
+      estado_clave: claveEstado(r.rows[0].estado_dom)
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/solicitudes/:id/consultar', auth, async (req, res) => {
   try {
     const tipo = req.body.tipo === 'reporte' ? 'reporte' : 'score';
+    const sr = await q('SELECT * FROM buro_solicitudes WHERE id=$1', [req.params.id]);
+    if (!sr.rows.length) return res.status(404).json({ error: 'No existe esa solicitud.' });
+    const faltan = revisaDatos(sr.rows[0]).filter(f =>
+      tipo === 'reporte' || f.indexOf('apellido materno') < 0);
+    if (faltan.length) {
+      return res.status(400).json({
+        error: 'Faltan datos que Buró exige: ' + faltan.join(', ') + '.',
+        faltan: faltan, sin_consumo: true
+      });
+    }
     const c = await cuotaMes();
     if (c.restantes <= 0 && !req.body.confirmado) {
       return res.status(409).json({
