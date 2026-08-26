@@ -724,6 +724,7 @@ async function llamaMoffin(sol, tipo) {
   }
 
   const body = {
+    accountType: 'PF',
     firstName: limpiaTexto(sol.nombre),
     firstLastName: limpiaTexto(sol.apellido_p),
     secondLastName: limpiaTexto(sol.apellido_m),
