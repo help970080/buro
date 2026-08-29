@@ -23,7 +23,7 @@ const crypto = require('crypto');
 const path = require('path');
 const { calculaRFC, verificaRFC } = require('./rfc');
 const { resumeReporte, semaforoSugerido } = require('./buro');
-const { generaPDF } = require('./comprobante');
+const { generaPDF, generaHojaBlanco } = require('./comprobante');
 const { generaReportePDF } = require('./reporte');
 
 const app = express();
@@ -1053,6 +1053,76 @@ app.get('/api/export/autorizaciones', auth, async (req, res) => {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="autorizaciones.csv"');
     res.send(csv);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* Hojas en blanco para imprimir. El vendedor las lleva y las llena a mano.
+   ?n=10 para sacar un talonario de 10 copias. */
+app.get('/api/hojas.pdf', auth, (req, res) => {
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'inline; filename="autorizaciones-para-firmar.pdf"');
+  generaHojaBlanco({ texto: TEXTO_AUTORIZACION }, res, req.query.n || 1);
+});
+
+/* Subir la hoja firmada con pluma. Equivale a la firma en pantalla. */
+app.post('/api/solicitudes/:id/firma-papel', auth, async (req, res) => {
+  try {
+    const img = req.body.imagen || '';
+    if (!/^data:image\/(jpe?g|png|webp);base64,/.test(img)) {
+      return res.status(400).json({ error: 'Manda una foto de la hoja firmada.' });
+    }
+    const bytes = Math.round((img.length - img.indexOf(',') - 1) * 0.75);
+    if (bytes > 4 * 1024 * 1024) {
+      return res.status(413).json({ error: 'La foto pesa más de 4 MB. Tómala con menos resolución.' });
+    }
+
+    const r = await q('SELECT * FROM buro_solicitudes WHERE id=$1', [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'No existe esa solicitud.' });
+    const s = r.rows[0];
+    if (['autorizada', 'consultada', 'entregada'].indexOf(s.estado) >= 0) {
+      return res.status(409).json({ error: 'Esta solicitud ya tiene autorización registrada.' });
+    }
+
+    const faltan = [];
+    if (!normNombre(s.nombre)) faltan.push('nombre');
+    if (!normNombre(s.apellido_p)) faltan.push('apellido paterno');
+    if (!(s.calle || '').trim()) faltan.push('calle');
+    if (!(s.colonia || '').trim()) faltan.push('colonia');
+    if (!(s.municipio || '').trim()) faltan.push('municipio');
+    if (!claveEstado(s.estado_dom)) faltan.push('estado');
+    if ((s.cp || '').replace(/\D/g, '').length !== 5) faltan.push('código postal');
+    if (faltan.length) {
+      return res.status(400).json({
+        error: 'Completa estos datos antes de registrar la firma: ' + faltan.join(', ') + '.'
+      });
+    }
+
+    const vence = new Date();
+    vence.setFullYear(vence.getFullYear() + 3);
+    const datos = {
+      nombre: s.nombre, apellido_p: s.apellido_p, apellido_m: s.apellido_m,
+      curp: s.curp, rfc: s.rfc, fecha_nac: s.fecha_nac, calle: s.calle,
+      colonia: s.colonia, municipio: s.municipio, estado_dom: s.estado_dom, cp: s.cp
+    };
+
+    await q(
+      `INSERT INTO buro_autorizaciones(solicitud_id, texto_hash, texto, firma, ip, agente, datos,
+        lugar, telefono, funcionario, modo, vence)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [s.id, HASH_AUTORIZACION, TEXTO_AUTORIZACION, img,
+        (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString().split(',')[0].trim(),
+        'Hoja firmada con pluma, digitalizada',
+        JSON.stringify(datos),
+        (req.body.lugar || '').toString().slice(0, 120) ||
+          [s.municipio, s.estado_dom].filter(Boolean).join(', '),
+        s.telefono || '', req.user.u, 'papel',
+        vence.toISOString().slice(0, 10)]);
+
+    await q('UPDATE buro_solicitudes SET estado=$1, actualizada=NOW() WHERE id=$2',
+      ['autorizada', s.id]);
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
