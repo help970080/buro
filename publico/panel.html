@@ -152,6 +152,7 @@
       <button class="claro chico" id="brefresca">Actualizar</button>
       <button class="claro chico" id="bexporta">Exportar lista (CSV)</button>
       <button class="claro chico" id="bexportapdf">Exportar comprobantes (PDF)</button>
+      <button class="claro chico" id="bhojas">Imprimir hojas en blanco</button>
     </div>
     <div id="tabla"></div>
   </section>
@@ -444,11 +445,21 @@
         '<div class="dato"><span>Estado</span><span><span class="pill ' + esc(s.estado) + '">' + esc(s.estado) + '</span></span></div>';
 
       if (['nueva','abierta'].indexOf(s.estado) >= 0){
-        h += '<button id="bpresencial" style="width:100%;margin-top:14px">El cliente está aquí — que firme ahora</button>' +
-             '<div class="folio-grande" style="margin-top:16px"><small>O DICTARLE POR TELÉFONO · FOLIO</small>' +
+        h += '<h2 style="margin-top:18px;font-size:13px;letter-spacing:.09em;text-transform:uppercase;color:#6B7A88">Cómo va a firmar</h2>' +
+             '<button id="bpresencial" style="width:100%;margin-top:10px">1 · Está aquí — que firme en pantalla</button>' +
+             '<div class="folio-grande" style="margin-top:16px"><small>2 · POR TELÉFONO — DÍCTALE ESTO</small>' +
              esc(s.folio) + '</div>' +
              '<div class="folio-grande"><small>CÓDIGO</small>' + esc(s.codigo) + '</div>' +
-             '<button class="claro" id="d_renovar" style="width:100%">Generar código nuevo</button>';
+             '<button class="claro" id="d_renovar" style="width:100%">Generar código nuevo</button>' +
+             '<div style="margin-top:20px;padding:14px;border:1px solid #D8D2C6;border-radius:9px;background:#FBFAF7">' +
+             '<b style="font-size:13px">3 · Firma en papel</b>' +
+             '<div style="font-size:12.5px;color:#6B7A88;margin:5px 0 10px">Para el cliente que no puede usar el celular. ' +
+             'Imprime, que firme con pluma, y sube la foto.</div>' +
+             '<div style="font-size:12.5px;color:#6B7A88;margin-bottom:8px">Anota en la hoja el folio <b>' +
+             esc(s.folio) + '</b> y el código <b>' + esc(s.codigo) + '</b>.</div>' +
+             '<label for="d_papel" style="margin-top:10px">Subir hoja firmada</label>' +
+             '<input id="d_papel" type="file" accept="image/*" capture="environment" style="padding:8px">' +
+             '<div id="d_mpapel" class="msg"></div></div>';
       }
 
       if (a){
@@ -569,6 +580,20 @@
 
   function conecta(){
     conectaPresencial();
+
+    var pp = $('d_papel');
+    if (pp) pp.addEventListener('change', function(){
+      var f = this.files && this.files[0];
+      if (!f) return;
+      msg('d_mpapel', 'Subiendo la hoja firmada...', 'ok');
+      var fr = new FileReader();
+      fr.onload = function(){
+        api('/api/solicitudes/' + actual + '/firma-papel', {method:'POST', body:{imagen: fr.result}})
+        .then(function(){ msg('d_mpapel','Autorización registrada.','ok'); abre(actual); lista(); })
+        .catch(function(e){ msg('d_mpapel', e.message, 'err'); });
+      };
+      fr.readAsDataURL(f);
+    });
     if ($('d_revision')){
       api('/api/solicitudes/' + actual + '/revisar').then(function(v){
         if (!$('d_revision')) return;
@@ -663,6 +688,11 @@
   });
   $('bexportapdf').addEventListener('click', function(){
     bajaArchivo('/api/export/comprobantes.pdf', 'autorizaciones.pdf');
+  });
+  $('bhojas').addEventListener('click', function(){
+    var n = prompt('¿Cuántas hojas quieres imprimir?', '10');
+    if (!n) return;
+    window.open('/api/hojas.pdf?n=' + encodeURIComponent(n) + '&t=' + encodeURIComponent(tok), '_blank');
   });
 
   if (tok) arranca();
