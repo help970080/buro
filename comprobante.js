@@ -171,103 +171,110 @@ function hoja(doc, d) {
  * con espacios en blanco donde el cliente escribe y firma.
  */
 function hojaEnBlanco(doc, d) {
-  const M = 50;
+  const M = 56;
   const ANCHO = doc.page.width - M * 2;
   let y = M;
 
-  /* Encabezado */
-  doc.rect(M, y, ANCHO, 50).fill(TINTA);
-  doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(13)
-    .text('LMV CREDIA, S.A. DE C.V.', M + 14, y + 11);
-  doc.font('Helvetica').fontSize(9).fillColor('#C9D6E2')
-    .text('Autorización para solicitar Reportes de Crédito · Persona Física', M + 14, y + 29);
-  y += 62;
+  /* Título del Anexo A, sin marca */
+  doc.font('Helvetica-Bold').fontSize(10).fillColor(TINTA)
+    .text('Otorgamiento de Consentimiento para Autorización de Consulta en caso de uso de ' +
+      'credenciales de Moffin de Buró de Crédito', M, y, { width: ANCHO, align: 'center' });
+  y = doc.y + 14;
 
-  /* Folio y código: en blanco para escribir a mano */
-  const anchoCaja = (ANCHO - 14) / 2;
+  /* Folio y código */
+  const caja = (ANCHO - 16) / 2;
   ['FOLIO', 'CÓDIGO'].forEach(function (t, i) {
-    const x = M + i * (anchoCaja + 14);
-    doc.rect(x, y, anchoCaja, 40).lineWidth(1).strokeColor(LINEA).stroke();
-    doc.font('Helvetica').fontSize(7).fillColor(GRIS).text(t, x + 8, y + 6);
+    const x = M + i * (caja + 16);
+    doc.rect(x, y, caja, 32).lineWidth(0.8).strokeColor(LINEA).stroke();
+    doc.font('Helvetica').fontSize(6.5).fillColor(GRIS).text(t, x + 7, y + 5);
   });
-  y += 50;
+  y += 44;
 
-  /* Texto de autorización */
-  doc.font('Helvetica-Bold').fontSize(8.5).fillColor(GRIS).text('TEXTO AUTORIZADO', M, y);
-  y += 12;
-  doc.font('Helvetica').fontSize(7.6).fillColor(TINTA)
-    .text(d.texto || '', M, y, { width: ANCHO, align: 'justify', lineGap: 1 });
-  y = doc.y + 12;
+  /* Lugar y fecha */
+  doc.font('Helvetica').fontSize(9).fillColor(TINTA)
+    .text('_______________________, a ______ de ____________________ de 20______.',
+      M, y, { width: ANCHO, align: 'right' });
+  y = doc.y + 16;
 
-  /* Renglones en blanco */
+  /* Nombre del titular */
+  doc.font('Helvetica').fontSize(7).fillColor(GRIS)
+    .text('NOMBRE COMPLETO DEL TITULAR DE LA INFORMACIÓN', M, y);
+  doc.moveTo(M, y + 26).lineTo(M + ANCHO, y + 26).lineWidth(0.8).strokeColor(TINTA).stroke();
+  y += 38;
+
+  /* Cuerpo: texto literal del Anexo A */
+  const parrafos = [
+    'Por este conducto autorizo expresamente a "Moffin Software, S.A.P.I. de C.V.", para que por ' +
+    'conducto de sus funcionarios facultados lleve a cabo Investigaciones, sobre mi comportamiento ' +
+    'crediticio o el de la sociedad que represento en o a través de las bases de datos de ' +
+    '"Trans Union de México, S. A., SIC" y/o "Dun & Bradstreet, S.A., SIC". Asimismo, autorizo ' +
+    'expresamente a "Moffin Software, S.A.P.I. de C.V." para que pueda consultar mi historial ' +
+    'crediticio con "Trans Union de México, S.A., SIC" y "Dun & Bradstreet, S.A., SIC". Finalmente, ' +
+    'autorizo expresamente para que "Moffin Software, S.A.P.I. de C.V." pueda compartir mis datos ' +
+    'con "LMV CREDIA SA DE CV" (el "Usuario").',
+
+    'Asimismo, declaro que conozco la naturaleza y alcance de la información que se solicitará, del ' +
+    'uso que "Moffin Software, S.A.P.I. de C.V." hará de tal información y de que ésta podrá realizar ' +
+    'consultas periódicas sobre mi historial o el de la sociedad que represento, consintiendo que esta ' +
+    'autorización se encuentre vigente por un período de 3 años contados a partir de su expedición y ' +
+    'en todo caso durante el tiempo que se mantenga la relación jurídica entre el Titular de la ' +
+    'Información y el Usuario.',
+
+    'En caso de que el Titular de la Información sea una Persona Moral, declaro bajo protesta de decir ' +
+    'verdad ser representante legal de la sociedad que suscribe esta autorización; manifestando que a ' +
+    'la fecha de firma de la presente los poderes que me han sido otorgados no me han sido revocados, ' +
+    'limitados, ni modificados en forma alguna.'
+  ];
+  doc.font('Helvetica').fontSize(8.2).fillColor(TINTA);
+  parrafos.forEach(function (p) {
+    doc.text(p, M, y, { width: ANCHO, align: 'justify', lineGap: 1.2 });
+    y = doc.y + 9;
+  });
+  y += 4;
+
+  /* Datos del titular que Buró exige en la autorización */
   function renglon(etiqueta, x, yy, ancho) {
-    doc.font('Helvetica').fontSize(7).fillColor(GRIS).text(etiqueta.toUpperCase(), x, yy);
-    doc.moveTo(x, yy + 24).lineTo(x + ancho, yy + 24).lineWidth(0.8).strokeColor(TINTA).stroke();
-    return yy + 34;
+    doc.font('Helvetica').fontSize(6.5).fillColor(GRIS).text(etiqueta.toUpperCase(), x, yy);
+    doc.moveTo(x, yy + 21).lineTo(x + ancho, yy + 21).lineWidth(0.8).strokeColor(TINTA).stroke();
+    return yy + 30;
   }
 
-  doc.moveTo(M, y).lineTo(M + ANCHO, y).lineWidth(0.8).strokeColor(LINEA).stroke();
-  y += 12;
-  doc.font('Helvetica-Bold').fontSize(8.5).fillColor(GRIS)
-    .text('DATOS DEL TITULAR', M, y);
-  doc.font('Helvetica').fontSize(7).fillColor(GRIS)
-    .text('Escriba con letra de molde', M + 130, y + 1);
-  y += 16;
-
-  y = renglon('Nombre completo (nombre, apellido paterno, apellido materno)', M, y, ANCHO);
-
-  const c2 = (ANCHO - 20) / 2;
+  const c2 = (ANCHO - 18) / 2;
+  const c3 = (ANCHO - 36) / 3;
   let yI = renglon('RFC con homoclave', M, y, c2);
-  renglon('CURP', M + c2 + 20, y, c2);
+  renglon('CURP', M + c2 + 18, y, c2);
   y = yI;
-
-  y = renglon('Calle y número', M, y, ANCHO);
-
-  const c3 = (ANCHO - 40) / 3;
+  y = renglon('Domicilio: calle y número', M, y, ANCHO);
   yI = renglon('Colonia', M, y, c3);
-  renglon('Municipio', M + c3 + 20, y, c3);
-  renglon('Estado', M + (c3 + 20) * 2, y, c3);
+  renglon('Municipio o delegación', M + c3 + 18, y, c3);
+  renglon('Estado', M + (c3 + 18) * 2, y, c3);
   y = yI;
-
   yI = renglon('Código postal', M, y, c3);
-  renglon('Teléfono', M + c3 + 20, y, c3);
-  renglon('Lugar y fecha en que firma', M + (c3 + 20) * 2, y, c3);
-  y = yI + 4;
-
-  doc.font('Helvetica').fontSize(7.5).fillColor(GRIS)
-    .text('Vigencia: 3 años a partir de la firma, o mientras dure la relación jurídica.', M, y);
-  y += 16;
+  renglon('Teléfono', M + c3 + 18, y, c3);
+  y = yI + 8;
 
   /* Firma */
-  doc.moveTo(M, y).lineTo(M + ANCHO, y).lineWidth(0.8).strokeColor(LINEA).stroke();
-  y += 12;
-  doc.font('Helvetica-Bold').fontSize(8.5).fillColor(GRIS)
-    .text('FIRMA AUTÓGRAFA DEL TITULAR', M, y);
-  doc.font('Helvetica').fontSize(7).fillColor(GRIS)
-    .text('Firme con bolígrafo dentro del recuadro', M + 175, y + 1);
-  y += 14;
+  doc.font('Helvetica').fontSize(8).fillColor(TINTA)
+    .text('Firmas del Anexo A que celebran LAS PARTES:', M, y);
+  y += 18;
 
-  doc.rect(M, y, 290, 82).lineWidth(0.8).strokeColor(LINEA).stroke();
-  doc.moveTo(M + 20, y + 66).lineTo(M + 270, y + 66).lineWidth(0.8).strokeColor(TINTA).stroke();
+  doc.rect(M + (ANCHO - 300) / 2, y, 300, 74)
+    .lineWidth(0.8).strokeColor(LINEA).stroke();
+  y += 84;
+  doc.moveTo(M + (ANCHO - 260) / 2, y).lineTo(M + (ANCHO + 260) / 2, y)
+    .lineWidth(0.8).strokeColor(TINTA).stroke();
+  doc.font('Helvetica').fontSize(8).fillColor(TINTA)
+    .text('El "Titular de la Información"', M, y + 5, { width: ANCHO, align: 'center' });
   doc.font('Helvetica').fontSize(6.5).fillColor(GRIS)
-    .text('Firma del titular', M + 20, y + 70, { width: 250, align: 'center' });
+    .text('Firma autógrafa', M, y + 17, { width: ANCHO, align: 'center' });
+  y += 34;
 
-  const xd = M + 310;
-  doc.font('Helvetica-Bold').fontSize(7.5).fillColor(GRIS)
-    .text('PARA USO DE LMV CREDIA', xd, y);
-  let yc = y + 16;
-  ['Nombre de quien recaba', 'Fecha de consulta BC'].forEach(function (t) {
-    doc.font('Helvetica').fontSize(6.5).fillColor(GRIS).text(t.toUpperCase(), xd, yc);
-    doc.moveTo(xd, yc + 20).lineTo(M + ANCHO, yc + 20).lineWidth(0.6).strokeColor(TINTA).stroke();
-    yc += 30;
-  });
-
-  const yPie = doc.page.height - 54;
-  doc.moveTo(M, yPie).lineTo(M + ANCHO, yPie).lineWidth(0.8).strokeColor(LINEA).stroke();
-  doc.font('Helvetica').fontSize(6.5).fillColor(GRIS)
-    .text('Una vez firmada, tome fotografía de esta hoja y súbala al sistema con el folio correspondiente. ' +
-      'Conserve el original bajo resguardo conforme al artículo 31 de la Ley para Regular las Sociedades de Información Crediticia.',
-      M, yPie + 7, { width: ANCHO, align: 'justify' });
+  /* Uso interno */
+  doc.moveTo(M, y).lineTo(M + ANCHO, y).lineWidth(0.6).strokeColor(LINEA).stroke();
+  y += 8;
+  const cu = (ANCHO - 18) / 2;
+  renglon('Nombre de quien recaba la autorización', M, y, cu);
+  renglon('Fecha y folio de consulta BC', M + cu + 18, y, cu);
 }
 
 /* Genera N hojas en blanco para que el vendedor las lleve impresas */
