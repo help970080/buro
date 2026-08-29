@@ -167,6 +167,125 @@ function hoja(doc, d) {
 }
 
 /**
+ * Hoja para imprimir y firmar con pluma. Mismos datos que Buró exige,
+ * con espacios en blanco donde el cliente escribe y firma.
+ */
+function hojaEnBlanco(doc, d) {
+  const M = 50;
+  const ANCHO = doc.page.width - M * 2;
+  let y = M;
+
+  /* Encabezado */
+  doc.rect(M, y, ANCHO, 50).fill(TINTA);
+  doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(13)
+    .text('LMV CREDIA, S.A. DE C.V.', M + 14, y + 11);
+  doc.font('Helvetica').fontSize(9).fillColor('#C9D6E2')
+    .text('Autorización para solicitar Reportes de Crédito · Persona Física', M + 14, y + 29);
+  y += 62;
+
+  /* Folio y código: en blanco para escribir a mano */
+  const anchoCaja = (ANCHO - 14) / 2;
+  ['FOLIO', 'CÓDIGO'].forEach(function (t, i) {
+    const x = M + i * (anchoCaja + 14);
+    doc.rect(x, y, anchoCaja, 40).lineWidth(1).strokeColor(LINEA).stroke();
+    doc.font('Helvetica').fontSize(7).fillColor(GRIS).text(t, x + 8, y + 6);
+  });
+  y += 50;
+
+  /* Texto de autorización */
+  doc.font('Helvetica-Bold').fontSize(8.5).fillColor(GRIS).text('TEXTO AUTORIZADO', M, y);
+  y += 12;
+  doc.font('Helvetica').fontSize(7.6).fillColor(TINTA)
+    .text(d.texto || '', M, y, { width: ANCHO, align: 'justify', lineGap: 1 });
+  y = doc.y + 12;
+
+  /* Renglones en blanco */
+  function renglon(etiqueta, x, yy, ancho) {
+    doc.font('Helvetica').fontSize(7).fillColor(GRIS).text(etiqueta.toUpperCase(), x, yy);
+    doc.moveTo(x, yy + 24).lineTo(x + ancho, yy + 24).lineWidth(0.8).strokeColor(TINTA).stroke();
+    return yy + 34;
+  }
+
+  doc.moveTo(M, y).lineTo(M + ANCHO, y).lineWidth(0.8).strokeColor(LINEA).stroke();
+  y += 12;
+  doc.font('Helvetica-Bold').fontSize(8.5).fillColor(GRIS)
+    .text('DATOS DEL TITULAR', M, y);
+  doc.font('Helvetica').fontSize(7).fillColor(GRIS)
+    .text('Escriba con letra de molde', M + 130, y + 1);
+  y += 16;
+
+  y = renglon('Nombre completo (nombre, apellido paterno, apellido materno)', M, y, ANCHO);
+
+  const c2 = (ANCHO - 20) / 2;
+  let yI = renglon('RFC con homoclave', M, y, c2);
+  renglon('CURP', M + c2 + 20, y, c2);
+  y = yI;
+
+  y = renglon('Calle y número', M, y, ANCHO);
+
+  const c3 = (ANCHO - 40) / 3;
+  yI = renglon('Colonia', M, y, c3);
+  renglon('Municipio', M + c3 + 20, y, c3);
+  renglon('Estado', M + (c3 + 20) * 2, y, c3);
+  y = yI;
+
+  yI = renglon('Código postal', M, y, c3);
+  renglon('Teléfono', M + c3 + 20, y, c3);
+  renglon('Lugar y fecha en que firma', M + (c3 + 20) * 2, y, c3);
+  y = yI + 4;
+
+  doc.font('Helvetica').fontSize(7.5).fillColor(GRIS)
+    .text('Vigencia: 3 años a partir de la firma, o mientras dure la relación jurídica.', M, y);
+  y += 16;
+
+  /* Firma */
+  doc.moveTo(M, y).lineTo(M + ANCHO, y).lineWidth(0.8).strokeColor(LINEA).stroke();
+  y += 12;
+  doc.font('Helvetica-Bold').fontSize(8.5).fillColor(GRIS)
+    .text('FIRMA AUTÓGRAFA DEL TITULAR', M, y);
+  doc.font('Helvetica').fontSize(7).fillColor(GRIS)
+    .text('Firme con bolígrafo dentro del recuadro', M + 175, y + 1);
+  y += 14;
+
+  doc.rect(M, y, 290, 82).lineWidth(0.8).strokeColor(LINEA).stroke();
+  doc.moveTo(M + 20, y + 66).lineTo(M + 270, y + 66).lineWidth(0.8).strokeColor(TINTA).stroke();
+  doc.font('Helvetica').fontSize(6.5).fillColor(GRIS)
+    .text('Firma del titular', M + 20, y + 70, { width: 250, align: 'center' });
+
+  const xd = M + 310;
+  doc.font('Helvetica-Bold').fontSize(7.5).fillColor(GRIS)
+    .text('PARA USO DE LMV CREDIA', xd, y);
+  let yc = y + 16;
+  ['Nombre de quien recaba', 'Fecha de consulta BC'].forEach(function (t) {
+    doc.font('Helvetica').fontSize(6.5).fillColor(GRIS).text(t.toUpperCase(), xd, yc);
+    doc.moveTo(xd, yc + 20).lineTo(M + ANCHO, yc + 20).lineWidth(0.6).strokeColor(TINTA).stroke();
+    yc += 30;
+  });
+
+  const yPie = doc.page.height - 54;
+  doc.moveTo(M, yPie).lineTo(M + ANCHO, yPie).lineWidth(0.8).strokeColor(LINEA).stroke();
+  doc.font('Helvetica').fontSize(6.5).fillColor(GRIS)
+    .text('Una vez firmada, tome fotografía de esta hoja y súbala al sistema con el folio correspondiente. ' +
+      'Conserve el original bajo resguardo conforme al artículo 31 de la Ley para Regular las Sociedades de Información Crediticia.',
+      M, yPie + 7, { width: ANCHO, align: 'justify' });
+}
+
+/* Genera N hojas en blanco para que el vendedor las lleve impresas */
+function generaHojaBlanco(datos, salida, cuantas) {
+  const doc = new PDFDocument({ size: 'LETTER', margin: 50, autoFirstPage: false });
+  doc.pipe(salida);
+  doc.info.Title = 'Autorización de consulta para firmar';
+  doc.info.Author = 'LMV CREDIA, S.A. DE C.V.';
+  const n = Math.min(Math.max(parseInt(cuantas, 10) || 1, 1), 50);
+  for (let i = 0; i < n; i++) {
+    doc.addPage();
+    hojaEnBlanco(doc, datos);
+  }
+  doc.end();
+  return doc;
+}
+
+/**
  * Genera un PDF con uno o varios comprobantes (una hoja por autorización).
  * @param {Array} filas
  * @param {stream.Writable} salida
@@ -190,4 +309,4 @@ function generaPDF(filas, salida) {
   return doc;
 }
 
-module.exports = { generaPDF, hoja, fechaLarga };
+module.exports = { generaPDF, generaHojaBlanco, hoja, fechaLarga };
