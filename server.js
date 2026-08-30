@@ -451,11 +451,14 @@ app.get('/api/solicitudes', auth, async (req, res) => {
     if (bus) {
       params.push('%' + bus + '%');
       w += ` AND (UPPER(s.nombre||' '||COALESCE(s.apellido_p,'')||' '||COALESCE(s.apellido_m,'')) LIKE $${params.length}
-              OR s.folio LIKE $${params.length} OR s.telefono LIKE $${params.length} OR s.curp LIKE $${params.length})`;
+              OR s.folio LIKE $${params.length} OR s.telefono LIKE $${params.length}
+              OR s.curp LIKE $${params.length} OR s.rfc LIKE $${params.length}
+              OR EXISTS (SELECT 1 FROM buro_consultas bc
+                         WHERE bc.solicitud_id = s.id AND bc.folio_moffin LIKE $${params.length}))`;
     }
     const r = await q(
       `SELECT s.*, c.score, c.tipo AS tipo_consulta, c.consultada, c.error AS error_consulta,
-              c.resumen, d.semaforo, d.token_agencia
+              c.resumen, c.folio_moffin, d.semaforo, d.token_agencia
        FROM buro_solicitudes s
        LEFT JOIN LATERAL (SELECT * FROM buro_consultas x WHERE x.solicitud_id=s.id ORDER BY x.id DESC LIMIT 1) c ON TRUE
        LEFT JOIN LATERAL (SELECT * FROM buro_dictamenes y WHERE y.solicitud_id=s.id ORDER BY y.id DESC LIMIT 1) d ON TRUE
@@ -1034,6 +1037,9 @@ app.get('/api/export/autorizaciones', auth, async (req, res) => {
               s.calle, s.colonia, s.municipio, s.estado_dom, s.cp,
               a.aceptada, a.vence, a.ip, a.texto_hash, a.agente,
               a.lugar, a.funcionario, a.folio_bc, a.fecha_consulta_bc, a.modo,
+              (SELECT bc.folio_moffin FROM buro_consultas bc
+               WHERE bc.solicitud_id = s.id AND bc.error IS NULL
+               ORDER BY bc.id DESC LIMIT 1) AS folio_consulta,
               (a.firma IS NOT NULL) AS con_firma
        FROM buro_autorizaciones a JOIN buro_solicitudes s ON s.id=a.solicitud_id
        WHERE a.aceptada::date BETWEEN $1 AND $2 ORDER BY a.id`, [desde, hasta]);
@@ -1047,7 +1053,7 @@ app.get('/api/export/autorizaciones', auth, async (req, res) => {
       x.calle, x.colonia, x.municipio, x.estado_dom, x.cp,
       x.lugar, x.aceptada ? new Date(x.aceptada).toISOString() : '',
       x.vence ? x.vence.toISOString().slice(0, 10) : '', x.con_firma ? 'Sí' : 'No',
-      x.funcionario, x.modo || 'remoto', x.folio_bc, x.fecha_consulta_bc ? x.fecha_consulta_bc.toISOString().slice(0, 10) : '',
+      x.funcionario, x.modo || 'remoto', x.folio_bc || x.folio_consulta || '', x.fecha_consulta_bc ? x.fecha_consulta_bc.toISOString().slice(0, 10) : '',
       x.ip, x.texto_hash, x.agente].map(esc).join(','));
     const csv = '\uFEFF' + [cab.map(esc).join(',')].concat(filas).join('\r\n');
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
