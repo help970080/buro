@@ -139,7 +139,7 @@
   <section class="tarjeta">
     <div class="barra">
       <h2 style="margin:0;flex:1">Solicitudes</h2>
-      <input id="buscar" type="text" placeholder="Nombre, folio, teléfono o CURP">
+      <input id="buscar" type="text" placeholder="Nombre, folio, teléfono, CURP, RFC o folio BC">
       <select id="filtro" style="width:auto">
         <option value="">Todas</option>
         <option value="nueva">Nuevas</option>
@@ -403,7 +403,7 @@
     }
     var h = '<table><thead><tr><th>Folio</th><th>Cliente</th>' +
       '<th class="ocultar-cel">Agencia</th><th>Estado</th><th>Score</th>' +
-      '<th class="ocultar-cel">Creada</th></tr></thead><tbody>';
+      '<th>Consulta BC</th><th class="ocultar-cel">Creada</th></tr></thead><tbody>';
     filas.forEach(function(f){
       var nom = [f.nombre, f.apellido_p, f.apellido_m].filter(Boolean).join(' ');
       var sem = f.semaforo ? '<span class="sem ' + esc(f.semaforo) + '"></span>' : '';
@@ -413,6 +413,8 @@
         '<td class="ocultar-cel">' + esc(f.agencia || '—') + '</td>' +
         '<td><span class="pill ' + esc(f.estado) + '">' + esc(f.estado) + '</span></td>' +
         '<td>' + (f.score ? '<b>' + f.score + '</b>' : '—') + '</td>' +
+        '<td style="font-size:13px">' + (f.folio_moffin && f.folio_moffin.indexOf('SIM-') !== 0
+          ? esc(f.folio_moffin) : '—') + '</td>' +
         '<td class="ocultar-cel" style="color:#6B7A88;font-size:13px">' + fecha(f.creada) + '</td>' +
         '</tr>';
     });
@@ -480,7 +482,9 @@
         if (c.error){
           h += '<div class="msg err" style="display:block">' + esc(c.error) + '</div>';
         } else {
-          h += '<div class="dato"><span>Tipo</span><span>' + esc(c.tipo) + '</span></div>' +
+          h += '<div class="dato"><span>Folio de consulta BC</span><span>' +
+              esc(c.folio_moffin || '—') + '</span></div>' +
+            '<div class="dato"><span>Tipo</span><span>' + esc(c.tipo) + '</span></div>' +
             '<div class="dato"><span>Score</span><span style="font-size:20px">' + (c.score || '—') + '</span></div>' +
             '<div class="dato"><span>Fecha</span><span>' + fecha(c.consultada) + '</span></div>';
           if (c.simulada) h += '<div class="aviso-sim">Consulta simulada o reutilizada. No se cobró.</div>';
