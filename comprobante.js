@@ -183,7 +183,7 @@ function hojaEnBlanco(doc, d) {
 
   /* Folio y código */
   const caja = (ANCHO - 16) / 2;
-  ['FOLIO', 'CÓDIGO'].forEach(function (t, i) {
+  ['FOLIO DE SOLICITUD', 'FOLIO DE CONSULTA BC'].forEach(function (t, i) {
     const x = M + i * (caja + 16);
     doc.rect(x, y, caja, 32).lineWidth(0.8).strokeColor(LINEA).stroke();
     doc.font('Helvetica').fontSize(6.5).fillColor(GRIS).text(t, x + 7, y + 5);
@@ -274,7 +274,7 @@ function hojaEnBlanco(doc, d) {
   y += 8;
   const cu = (ANCHO - 18) / 2;
   renglon('Nombre de quien recaba la autorización', M, y, cu);
-  renglon('Fecha y folio de consulta BC', M + cu + 18, y, cu);
+  renglon('Fecha de consulta BC', M + cu + 18, y, cu);
 }
 
 /* Genera N hojas en blanco para que el vendedor las lleve impresas */
