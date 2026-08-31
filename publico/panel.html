@@ -654,6 +654,32 @@
                   return '<li>' + t + '</li>';
                 }).join('') + '</ul></div>';
             }
+            if (r.evaluacion){
+              var ev = r.evaluacion;
+              var colE = ev.semaforo === 'verde' ? '#1E6F50'
+                : (ev.semaforo === 'ambar' ? '#B0761A' : '#8C1C13');
+              h += '<h2 style="margin-top:18px;font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:#6B7A88">' + 'Evaluación e interpretación interna · No Buró</h2>' +
+                '<div style="margin-top:8px;border:1px solid #D8D2C6;border-radius:9px;overflow:hidden">' +
+                '<div style="display:flex">' +
+                '<div style="background:' + colE + ';color:#fff;padding:14px 10px;text-align:center;min-width:86px">' +
+                '<div style="font-size:28px;font-weight:800;line-height:1">' + ev.puntaje + '</div>' +
+                '<div style="font-size:10px;opacity:.85;margin-top:3px">DE 100</div></div>' +
+                '<div style="padding:12px 14px;flex:1">' +
+                '<b style="color:' + colE + ';font-size:15px">' + esc(ev.nivel) + '</b>' +
+                '<div style="font-size:13px;color:#2C4A63;margin-top:3px">' + esc(ev.recomendacion) + '</div>' +
+                '<div style="font-size:12.5px;color:#6B7A88;margin-top:7px">Ya paga <b style="color:#12263A">' +
+                pesos(ev.compromiso_mensual) + '</b> al mes en ' + ev.creditos_activos + ' crédito(s)</div>' +
+                '</div></div>' +
+                '<div style="display:flex;gap:14px;padding:11px 14px;border-top:1px solid #EDE9E1;font-size:12.5px">' +
+                '<div style="flex:1"><b style="color:#1E6F50;font-size:11px">A FAVOR</b><ul style="margin:4px 0 0;padding-left:16px;color:#2C4A63">' +
+                ev.a_favor.map(function(t){ return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></div>' +
+                '<div style="flex:1"><b style="color:#8C1C13;font-size:11px">EN CONTRA</b><ul style="margin:4px 0 0;padding-left:16px;color:#2C4A63">' +
+                ev.en_contra.map(function(t){ return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></div>' +
+                '</div>' +
+                '<div style="padding:8px 14px;background:#FBFAF7;font-size:11px;color:#6B7A88;border-top:1px solid #EDE9E1">' +
+                'Evaluación interna por reglas. No es score de Buró ni sustituye tu criterio.</div></div>';
+            }
+
             if (r.semaforo){
               h += '<div style="margin-top:14px;padding:13px;border-radius:9px;background:#FBFAF7;border:1px solid #D8D2C6">' +
                 '<b><span class="sem ' + esc(r.semaforo) + '"></span>Sugerencia: ' + esc(r.semaforo.toUpperCase()) + '</b>' +
