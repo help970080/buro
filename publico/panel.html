@@ -381,6 +381,123 @@
     });
   }
 
+  /* ---- Documentos de respaldo ---- */
+  var TIPO_DOC = { ine: 'Identificación (frente)', hoja: 'Hoja de autorización firmada' };
+
+  function pintaDocs(){
+    api('/api/solicitudes/' + actual + '/documentos').then(function(d){
+      if (!$('d_docs')) return;
+      var h = '';
+      ['ine','hoja'].forEach(function(t){
+        var doc = d[t];
+        h += '<div style="padding:11px;border:1px solid ' +
+          (doc && doc.revisado ? '#BFE0D1' : '#D8D2C6') + ';border-radius:8px;margin-bottom:9px;background:' +
+          (doc && doc.revisado ? '#F3F9F6' : '#fff') + '">' +
+          '<div style="display:flex;align-items:center;gap:8px">' +
+          '<b style="flex:1;font-size:13px">' + TIPO_DOC[t] + '</b>' +
+          (doc
+            ? (doc.revisado
+                ? '<span class="pill consultada">revisado</span>'
+                : '<span class="pill autorizada">falta revisar</span>')
+            : '<span class="pill nueva">sin subir</span>') +
+          '</div>';
+        if (doc){
+          h += '<div style="display:flex;gap:8px;margin-top:9px;flex-wrap:wrap">' +
+            '<button class="claro chico" data-ver="' + doc.id + '">Ver</button>' +
+            (doc.revisado
+              ? '<button class="claro chico" data-desrev="' + doc.id + '">Quitar revisado</button>'
+              : '<button class="chico" data-rev="' + doc.id + '">Está correcto</button>') +
+            '<button class="claro chico" data-del="' + doc.id + '">Reemplazar</button></div>' +
+            (doc.revisado_por
+              ? '<div style="font-size:11.5px;color:#6B7A88;margin-top:6px">Revisó ' +
+                esc(doc.revisado_por) + ' · ' + fecha(doc.revisado_en) + '</div>' : '');
+        } else {
+          h += '<input type="file" accept="image/*" capture="environment" data-sube="' + t +
+               '" style="padding:7px;margin-top:8px">';
+        }
+        h += '</div>';
+      });
+
+      h += d.completo
+        ? '<button id="d_regpapel" style="width:100%;margin-top:4px">Registrar autorización y continuar</button>'
+        : '<div style="font-size:12.5px;color:#6B7A88;text-align:center;padding:8px">' +
+          'Sube y revisa los dos documentos para continuar.</div>';
+      $('d_docs').innerHTML = h;
+      conectaDocs();
+    }).catch(function(e){
+      if ($('d_docs')) $('d_docs').innerHTML = '<div class="msg err" style="display:block">' + esc(e.message) + '</div>';
+    });
+  }
+
+  function conectaDocs(){
+    var c = $('d_docs');
+    if (!c) return;
+
+    Array.prototype.forEach.call(c.querySelectorAll('[data-sube]'), function(inp){
+      inp.addEventListener('change', function(){
+        var f = this.files && this.files[0];
+        if (!f) return;
+        msg('d_mdocs','Subiendo...','ok');
+        var fr = new FileReader();
+        fr.onload = function(){
+          api('/api/solicitudes/' + actual + '/documento',
+              {method:'POST', body:{tipo: inp.getAttribute('data-sube'), imagen: fr.result}})
+          .then(function(){ msg('d_mdocs',''); pintaDocs(); })
+          .catch(function(e){ msg('d_mdocs', e.message, 'err'); });
+        };
+        fr.readAsDataURL(f);
+      });
+    });
+
+    Array.prototype.forEach.call(c.querySelectorAll('[data-ver]'), function(b){
+      b.addEventListener('click', function(){
+        msg('d_mdocs','Abriendo...','ok');
+        api('/api/documento/' + b.getAttribute('data-ver')).then(function(d){
+          msg('d_mdocs','');
+          var w = window.open('', '_blank');
+          if (!w) { msg('d_mdocs','Permite las ventanas emergentes para ver el documento.','err'); return; }
+          w.document.write('<title>' + TIPO_DOC[d.tipo] + '</title>' +
+            '<body style="margin:0;background:#12263A;display:flex;align-items:center;justify-content:center">' +
+            '<img src="' + d.imagen + '" style="max-width:100%;max-height:100vh"></body>');
+          w.document.close();
+        }).catch(function(e){ msg('d_mdocs', e.message, 'err'); });
+      });
+    });
+
+    Array.prototype.forEach.call(c.querySelectorAll('[data-rev]'), function(b){
+      b.addEventListener('click', function(){
+        api('/api/documento/' + b.getAttribute('data-rev') + '/revisar', {method:'POST', body:{correcto:true}})
+          .then(pintaDocs).catch(function(e){ msg('d_mdocs', e.message, 'err'); });
+      });
+    });
+
+    Array.prototype.forEach.call(c.querySelectorAll('[data-desrev]'), function(b){
+      b.addEventListener('click', function(){
+        api('/api/documento/' + b.getAttribute('data-desrev') + '/revisar', {method:'POST', body:{correcto:false}})
+          .then(pintaDocs).catch(function(e){ msg('d_mdocs', e.message, 'err'); });
+      });
+    });
+
+    Array.prototype.forEach.call(c.querySelectorAll('[data-del]'), function(b){
+      b.addEventListener('click', function(){
+        if (!confirm('¿Borrar este documento para subir otro?')) return;
+        api('/api/documento/' + b.getAttribute('data-del'), {method:'DELETE'})
+          .then(pintaDocs).catch(function(e){ msg('d_mdocs', e.message, 'err'); });
+      });
+    });
+
+    var rp = $('d_regpapel');
+    if (rp) rp.addEventListener('click', function(){
+      rp.disabled = true; rp.textContent = 'Registrando...';
+      api('/api/solicitudes/' + actual + '/firma-papel', {method:'POST', body:{}})
+        .then(function(){ abre(actual); lista(); })
+        .catch(function(e){
+          rp.disabled = false; rp.textContent = 'Registrar autorización y continuar';
+          msg('d_mdocs', e.message, 'err');
+        });
+    });
+  }
+
   /* ---- Lista ---- */
   function lista(){
     var qs = '?estado=' + encodeURIComponent($('filtro').value) +
@@ -447,21 +564,27 @@
         '<div class="dato"><span>Estado</span><span><span class="pill ' + esc(s.estado) + '">' + esc(s.estado) + '</span></span></div>';
 
       if (['nueva','abierta'].indexOf(s.estado) >= 0){
-        h += '<h2 style="margin-top:18px;font-size:13px;letter-spacing:.09em;text-transform:uppercase;color:#6B7A88">Cómo va a firmar</h2>' +
-             '<button id="bpresencial" style="width:100%;margin-top:10px">1 · Está aquí — que firme en pantalla</button>' +
-             '<div class="folio-grande" style="margin-top:16px"><small>2 · POR TELÉFONO — DÍCTALE ESTO</small>' +
-             esc(s.folio) + '</div>' +
-             '<div class="folio-grande"><small>CÓDIGO</small>' + esc(s.codigo) + '</div>' +
-             '<button class="claro" id="d_renovar" style="width:100%">Generar código nuevo</button>' +
-             '<div style="margin-top:20px;padding:14px;border:1px solid #D8D2C6;border-radius:9px;background:#FBFAF7">' +
-             '<b style="font-size:13px">3 · Firma en papel</b>' +
-             '<div style="font-size:12.5px;color:#6B7A88;margin:5px 0 10px">Para el cliente que no puede usar el celular. ' +
-             'Imprime, que firme con pluma, y sube la foto.</div>' +
-             '<div style="font-size:12.5px;color:#6B7A88;margin-bottom:8px">Anota en la hoja el folio <b>' +
-             esc(s.folio) + '</b> y el código <b>' + esc(s.codigo) + '</b>.</div>' +
-             '<label for="d_papel" style="margin-top:10px">Subir hoja firmada</label>' +
-             '<input id="d_papel" type="file" accept="image/*" capture="environment" style="padding:8px">' +
-             '<div id="d_mpapel" class="msg"></div></div>';
+        h += '<h2 style="margin-top:18px;font-size:13px;letter-spacing:.09em;text-transform:uppercase;color:#6B7A88">Falta la autorización del cliente</h2>' +
+
+          '<div style="margin-top:10px;padding:15px;border:2px solid #12263A;border-radius:9px;background:#fff">' +
+          '<b style="font-size:14px">Ya me mandaron INE y hoja firmada</b>' +
+          '<div style="font-size:12.5px;color:#6B7A88;margin:5px 0 12px">' +
+          'Sube las dos, revísalas y márcalas correctas. El cliente ya no interviene.</div>' +
+          '<div id="d_docs">Cargando documentos...</div>' +
+          '<div id="d_mdocs" class="msg"></div></div>' +
+
+          '<div style="margin-top:12px;padding:15px;border:1px solid #D8D2C6;border-radius:9px;background:#FBFAF7">' +
+          '<b style="font-size:13px">El cliente todavía no firma</b>' +
+          '<div style="font-size:12.5px;color:#6B7A88;margin:5px 0 10px">' +
+          'Si lo tienes enfrente, que firme en pantalla. Si no, dícta le los datos por teléfono.</div>' +
+          '<button id="bpresencial" style="width:100%">Está aquí — que firme en pantalla</button>' +
+          '<div style="display:flex;gap:10px;margin-top:12px">' +
+          '<div class="folio-grande" style="flex:1;margin:0"><small>FOLIO</small>' + esc(s.folio) + '</div>' +
+          '<div class="folio-grande" style="flex:1;margin:0"><small>CÓDIGO</small>' + esc(s.codigo) + '</div>' +
+          '</div>' +
+          '<div style="font-size:12px;color:#6B7A88;margin-top:8px">Que entre a buro.legaxia.uk con esos datos. Vencen en 72 horas.</div>' +
+          '<button class="claro" id="d_renovar" style="width:100%;margin-top:8px">Generar código nuevo</button>' +
+          '</div>';
       }
 
       if (a){
@@ -585,69 +708,7 @@
   function conecta(){
     conectaPresencial();
 
-    var pp = $('d_papel');
-    if (pp) pp.addEventListener('change', function(){
-      var f = this.files && this.files[0];
-      if (!f) return;
-      msg('d_mpapel', 'Subiendo la hoja firmada...', 'ok');
-      var fr = new FileReader();
-      fr.onload = function(){
-        api('/api/solicitudes/' + actual + '/firma-papel', {method:'POST', body:{imagen: fr.result}})
-        .then(function(){ msg('d_mpapel','Autorización registrada.','ok'); abre(actual); lista(); })
-        .catch(function(e){ msg('d_mpapel', e.message, 'err'); });
-      };
-      fr.readAsDataURL(f);
-    });
-    if ($('d_revision')){
-      api('/api/solicitudes/' + actual + '/revisar').then(function(v){
-        if (!$('d_revision')) return;
-        if (v.listo){
-          $('d_revision').innerHTML =
-            '<div class="msg ok" style="display:block">Los datos cumplen lo que pide Buró. Listo para consultar.</div>';
-        } else {
-          $('d_revision').innerHTML =
-            '<div class="msg err" style="display:block"><b>Antes de consultar, faltan:</b><br>' +
-            esc(v.faltan.join(' · ')) + '</div>';
-        }
-      }).catch(function(){});
-    }
-    var r = $('d_renovar');
-    if (r) r.addEventListener('click', function(){
-      api('/api/solicitudes/' + actual + '/renovar', {method:'POST', body:{}})
-        .then(function(){ abre(actual); })
-        .catch(function(e){ msg('d_msg', e.message, 'err'); });
-    });
-
-    ['d_score','d_reporte'].forEach(function(bid){
-      var b = $(bid);
-      if(!b) return;
-      b.addEventListener('click', function(){
-        var tipo = bid === 'd_reporte' ? 'reporte' : 'score';
-        consulta(tipo, false);
-      });
-    });
-
-    var g = $('d_guardar');
-    if (g) g.addEventListener('click', function(){
-      g.disabled = true;
-      api('/api/solicitudes/' + actual + '/dictamen', {method:'POST', body:{
-        semaforo: $('d_sem').value,
-        monto_sugerido: $('d_monto').value,
-        notas: $('d_notas').value
-      }}).then(function(){ abre(actual); lista(); })
-      .catch(function(e){ g.disabled = false; msg('d_msg', e.message, 'err'); });
-    });
-
-    var pdf = $('d_pdf');
-    if (pdf) pdf.addEventListener('click', function(){
-      bajaArchivo('/api/solicitudes/' + actual + '/comprobante.pdf',
-                  'autorizacion-' + actual + '.pdf');
-    });
-
-    var rp = $('d_reppdf');
-    if (rp) rp.addEventListener('click', function(){
-      window.open('/api/solicitudes/' + actual + '/reporte.pdf?t=' + encodeURIComponent(tok), '_blank');
-    });
+    if ($('d_docs')) pintaDocs();
 
     var cp = $('d_copiar');
     if (cp) cp.addEventListener('click', function(){
