@@ -9,6 +9,7 @@
 
 const PDFDocument = require('pdfkit');
 const { monto, entero, fechaBuro } = require('./buro');
+const { evalua, capacidad } = require('./evaluacion');
 
 const NEGRO = '#000000';
 const GRIS = '#6B7A88';
@@ -252,6 +253,61 @@ function generaReportePDF(datos, salida) {
       .text('Claves de razón: ' + r.razones.join(', '), M + 82, y + 17, { width: ANCHO - 86 });
   }
   y += 33;
+
+  /* Evaluación interna */
+  const ev = datos.evaluacion || evalua(datos.payload, r);
+  const colSem = ev.semaforo === 'verde' ? VERDE : (ev.semaforo === 'ambar' ? AMBAR : ROJO);
+  const favor = ev.a_favor.slice(0, 5);
+  const contra = ev.en_contra.slice(0, 5);
+  const filas = Math.max(favor.length, contra.length);
+  const altoEv = Math.max(62, 22 + filas * 11);
+
+  y = salto(doc, y, altoEv + 20, M);
+  y = barra(doc, 'Evaluación e interpretación interna · No Buró', y, M, ANCHO);
+  doc.rect(M, y, ANCHO, altoEv).lineWidth(0.6).strokeColor(LINEA).stroke();
+
+  /* Puntaje */
+  doc.rect(M + 1, y + 1, 84, altoEv - 2).fill(colSem);
+  doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(24)
+    .text(String(ev.puntaje), M + 1, y + altoEv / 2 - 20, { width: 84, align: 'center' });
+  doc.font('Helvetica').fontSize(5.8).text('DE 100 PUNTOS', M + 1, y + altoEv / 2 + 6,
+    { width: 84, align: 'center' });
+
+  doc.font('Helvetica-Bold').fontSize(9.5).fillColor(colSem)
+    .text(ev.nivel, M + 94, y + 6, { width: 236 });
+  doc.font('Helvetica').fontSize(6.8).fillColor(NEGRO)
+    .text(ev.recomendacion, M + 94, y + 19, { width: 236 });
+
+  doc.font('Helvetica-Bold').fontSize(6).fillColor(NEGRO)
+    .text('COMPROMISO MENSUAL ACTUAL', M + 94, y + altoEv - 24);
+  doc.font('Helvetica-Bold').fontSize(11)
+    .text('$' + pesos(ev.compromiso_mensual), M + 94, y + altoEv - 16);
+  doc.font('Helvetica').fontSize(6).fillColor(GRIS)
+    .text('en ' + ev.creditos_activos + ' crédito(s) activo(s)', M + 158, y + altoEv - 12);
+
+  /* Señales, en dos columnas parejas */
+  const xs = M + 336;
+  const anchoCol = (ANCHO - 340) / 2 - 6;
+  let yf = y + 5;
+  doc.font('Helvetica-Bold').fontSize(6).fillColor(VERDE).text('A FAVOR', xs, yf);
+  doc.font('Helvetica-Bold').fontSize(6).fillColor(ROJO)
+    .text('EN CONTRA', xs + anchoCol + 12, yf);
+  yf += 8;
+  favor.forEach(function (t, i) {
+    doc.font('Helvetica').fontSize(5.6).fillColor(NEGRO)
+      .text('• ' + t, xs, yf + i * 11, { width: anchoCol, height: 10, ellipsis: true });
+  });
+  contra.forEach(function (t, i) {
+    doc.font('Helvetica').fontSize(5.6).fillColor(NEGRO)
+      .text('• ' + t, xs + anchoCol + 12, yf + i * 11,
+        { width: anchoCol, height: 10, ellipsis: true });
+  });
+  y += altoEv + 3;
+
+  doc.font('Helvetica').fontSize(5.6).fillColor(GRIS)
+    .text('Evaluación interna de LMV Credia basada en reglas propias para crédito de monto chico. ' +
+      'No es un score de Buró de Crédito ni sustituye el criterio del analista.', M, y, { width: ANCHO });
+  y += 14;
 
   /* Domicilios */
   const doms = lista(per.Domicilios, 'Domicilio');
