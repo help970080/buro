@@ -740,14 +740,14 @@
     var pdf = $('d_pdf');
     if (pdf) pdf.addEventListener('click', function(){
       bajaArchivo('/api/solicitudes/' + actual + '/comprobante.pdf',
-                  'autorizacion-' + actual + '.pdf', true);
+                  'autorizacion-' + actual + '.pdf', 'd_msg');
     });
 
     /* Reporte de crédito */
     var rp = $('d_reppdf');
     if (rp) rp.addEventListener('click', function(){
       bajaArchivo('/api/solicitudes/' + actual + '/reporte.pdf',
-                  'reporte-' + actual + '.pdf', true);
+                  'reporte-' + actual + '.pdf', 'd_msg');
     });
 
     /* Código nuevo para el cliente */
@@ -814,7 +814,10 @@
   }
 
   /* ---- Exportar ---- */
-  function bajaArchivo(ruta, nombre, verEnPantalla){
+  /* Descarga el archivo y deja un aviso con enlace por si el navegador lo escondió */
+  function bajaArchivo(ruta, nombre, caja){
+    var el = caja && $(caja);
+    if (el) { el.textContent = 'Generando el archivo...'; el.className = 'msg ok'; }
     fetch(ruta, {headers:{'authorization':'Bearer ' + tok}})
       .then(function(r){
         if (!r.ok) {
@@ -829,32 +832,31 @@
       .then(function(b){
         if (!b || b.size < 100) throw new Error('El archivo llegó vacío. Intenta de nuevo.');
         var u = URL.createObjectURL(b);
-        if (verEnPantalla){
-          var w = window.open(u, '_blank');
-          if (!w){
-            var a2 = document.createElement('a');
-            a2.href = u; a2.download = nombre;
-            document.body.appendChild(a2); a2.click(); document.body.removeChild(a2);
-          }
-          setTimeout(function(){ URL.revokeObjectURL(u); }, 60000);
-          return;
-        }
         var a = document.createElement('a');
         a.href = u; a.download = nombre;
         document.body.appendChild(a); a.click();
-        document.body.removeChild(a); URL.revokeObjectURL(u);
-      }).catch(function(e){ alert(e.message); });
+        document.body.removeChild(a);
+        if (el){
+          el.className = 'msg ok';
+          el.innerHTML = 'Se descargó <b>' + esc(nombre) + '</b> a tu carpeta de Descargas. ' +
+            '<a href="' + u + '" target="_blank" style="color:#12263A;font-weight:700">Abrirlo aquí</a>';
+        }
+        setTimeout(function(){ URL.revokeObjectURL(u); }, 120000);
+      }).catch(function(e){
+        if (el){ el.className = 'msg err'; el.textContent = e.message; }
+        else alert(e.message);
+      });
   }
   $('bexporta').addEventListener('click', function(){
     bajaArchivo('/api/export/autorizaciones', 'autorizaciones.csv');
   });
   $('bexportapdf').addEventListener('click', function(){
-    bajaArchivo('/api/export/comprobantes.pdf', 'autorizaciones.pdf', true);
+    bajaArchivo('/api/export/comprobantes.pdf', 'autorizaciones.pdf');
   });
   $('bhojas').addEventListener('click', function(){
     var n = prompt('¿Cuántas hojas quieres imprimir?', '10');
     if (!n) return;
-    bajaArchivo('/api/hojas.pdf?n=' + encodeURIComponent(n), 'hojas-autorizacion.pdf', true);
+    bajaArchivo('/api/hojas.pdf?n=' + encodeURIComponent(n), 'hojas-autorizacion.pdf');
   });
 
   if (tok) arranca();
