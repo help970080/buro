@@ -40,6 +40,9 @@ const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || '';
 const IVR_URL = process.env.IVR_URL || '';
 const IVR_TOKEN = process.env.IVR_TOKEN || '';
 const CACHE_DIAS = parseInt(process.env.CACHE_DIAS || '90', 10);
+const DOCS_KEY = process.env.DOCS_KEY || '';
+const MESES_INE = parseInt(process.env.MESES_INE || '6', 10);
+const MESES_HOJA = parseInt(process.env.MESES_HOJA || '38', 10);
 
 if (!JWT_SECRET) {
   console.error('FALTA la variable JWT_SECRET en Render. El server no arranca sin ella.');
@@ -133,6 +136,23 @@ function normNombre(s) {
     .replace(/\s+/g, ' ').trim().toUpperCase();
 }
 const CURP_RE = /^[A-Z][AEIOUX][A-Z]{2}\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])[HM](AS|BC|BS|CC|CL|CM|CS|CH|DF|DG|GT|GR|HG|JC|MC|MN|MS|NT|NL|OC|PL|QT|QR|SP|SL|SR|TC|TS|TL|VZ|YN|ZS|NE)[B-DF-HJ-NP-TV-Z]{3}[A-Z\d]\d$/;
+
+/* ---------- Cifrado de documentos (AES-256-GCM) ---------- */
+function docsListo() { return /^[0-9a-fA-F]{64}$/.test(DOCS_KEY); }
+
+function cifra(texto) {
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', Buffer.from(DOCS_KEY, 'hex'), iv);
+  const d = Buffer.concat([c.update(texto, 'utf8'), c.final()]);
+  return Buffer.concat([iv, c.getAuthTag(), d]).toString('base64');
+}
+
+function descifra(guardado) {
+  const raw = Buffer.from(guardado, 'base64');
+  const d = crypto.createDecipheriv('aes-256-gcm', Buffer.from(DOCS_KEY, 'hex'), raw.subarray(0, 12));
+  d.setAuthTag(raw.subarray(12, 28));
+  return Buffer.concat([d.update(raw.subarray(28)), d.final()]).toString('utf8');
+}
 
 /* ---------- Texto de autorización (Anexo A del contrato Moffin) ---------- */
 const PARRAFOS_AUTORIZACION = [
@@ -277,6 +297,34 @@ async function initDB() {
     creado TIMESTAMPTZ DEFAULT NOW()
   )`);
 
+  await q(`CREATE TABLE IF NOT EXISTS buro_documentos (
+    id BIGSERIAL PRIMARY KEY,
+    solicitud_id BIGINT REFERENCES buro_solicitudes(id) ON DELETE CASCADE,
+    tipo TEXT NOT NULL,
+    imagen TEXT NOT NULL,
+    bytes INT,
+    sha256 TEXT,
+    subido_por TEXT,
+    revisado BOOLEAN DEFAULT FALSE,
+    revisado_por TEXT,
+    revisado_en TIMESTAMPTZ,
+    nota TEXT,
+    creado TIMESTAMPTZ DEFAULT NOW(),
+    purgar DATE,
+    purgado TIMESTAMPTZ
+  )`);
+
+  await q(`CREATE TABLE IF NOT EXISTS buro_vistas_doc (
+    id BIGSERIAL PRIMARY KEY,
+    documento_id BIGINT,
+    solicitud_id BIGINT,
+    usuario TEXT,
+    ip TEXT,
+    visto TIMESTAMPTZ DEFAULT NOW()
+  )`);
+
+  await q(`CREATE INDEX IF NOT EXISTS ix_doc_sol ON buro_documentos(solicitud_id)`);
+  await q(`CREATE INDEX IF NOT EXISTS ix_doc_purgar ON buro_documentos(purgar) WHERE purgado IS NULL`);
   await q(`CREATE INDEX IF NOT EXISTS ix_sol_estado ON buro_solicitudes(estado)`);
   await q(`CREATE INDEX IF NOT EXISTS ix_sol_curp ON buro_solicitudes(curp)`);
   await q(`CREATE INDEX IF NOT EXISTS ix_cons_mes ON buro_consultas(mes)`);
@@ -395,6 +443,113 @@ app.post('/api/ine/leer', auth, async (req, res) => {
     res.status(500).json({ error: 'No se pudo leer la credencial. Captura a mano.' });
   }
 });
+
+/* ---------- Documentos de respaldo ---------- */
+app.post('/api/solicitudes/:id/documento', auth, async (req, res) => {
+  try {
+    if (!docsListo()) {
+      return res.status(400).json({
+        error: 'El resguardo de documentos no esta configurado. Falta DOCS_KEY en Render.'
+      });
+    }
+    const tipo = req.body.tipo === 'ine' ? 'ine' : 'hoja';
+    const img = req.body.imagen || '';
+    if (!/^data:image\/(jpe?g|png|webp);base64,/.test(img)) {
+      return res.status(400).json({ error: 'Manda una imagen valida (JPG o PNG).' });
+    }
+    const bytes = Math.round((img.length - img.indexOf(',') - 1) * 0.75);
+    if (bytes > 5 * 1024 * 1024) {
+      return res.status(413).json({ error: 'La imagen pesa mas de 5 MB. Tomala con menos resolucion.' });
+    }
+
+    const sol = await q('SELECT id FROM buro_solicitudes WHERE id=$1', [req.params.id]);
+    if (!sol.rows.length) return res.status(404).json({ error: 'No existe esa solicitud.' });
+
+    await q(`UPDATE buro_documentos SET imagen='', purgado=NOW()
+             WHERE solicitud_id=$1 AND tipo=$2 AND purgado IS NULL`, [req.params.id, tipo]);
+
+    const purgar = new Date();
+    purgar.setMonth(purgar.getMonth() + (tipo === 'ine' ? MESES_INE : MESES_HOJA));
+
+    const r = await q(
+      `INSERT INTO buro_documentos(solicitud_id, tipo, imagen, bytes, sha256, subido_por, purgar)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, tipo, creado, purgar`,
+      [req.params.id, tipo, cifra(img), bytes,
+        crypto.createHash('sha256').update(img).digest('hex'), req.user.u,
+        purgar.toISOString().slice(0, 10)]);
+    res.json(r.rows[0]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/solicitudes/:id/documentos', auth, async (req, res) => {
+  try {
+    const r = await q(
+      `SELECT id, tipo, bytes, subido_por, revisado, revisado_por, revisado_en, nota, creado, purgar
+       FROM buro_documentos WHERE solicitud_id=$1 AND purgado IS NULL ORDER BY tipo`,
+      [req.params.id]);
+    const porTipo = {};
+    r.rows.forEach(function (d) { porTipo[d.tipo] = d; });
+    res.json({
+      ine: porTipo.ine || null,
+      hoja: porTipo.hoja || null,
+      completo: !!(porTipo.ine && porTipo.ine.revisado && porTipo.hoja && porTipo.hoja.revisado)
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/documento/:id', auth, async (req, res) => {
+  try {
+    if (!docsListo()) return res.status(400).json({ error: 'Resguardo no configurado.' });
+    const r = await q(
+      `SELECT id, solicitud_id, tipo, imagen FROM buro_documentos
+       WHERE id=$1 AND purgado IS NULL`, [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Documento no disponible.' });
+    await q(`INSERT INTO buro_vistas_doc(documento_id, solicitud_id, usuario, ip) VALUES ($1,$2,$3,$4)`,
+      [r.rows[0].id, r.rows[0].solicitud_id, req.user.u,
+        (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString().split(',')[0].trim()]);
+    res.json({ id: r.rows[0].id, tipo: r.rows[0].tipo, imagen: descifra(r.rows[0].imagen) });
+  } catch (e) {
+    res.status(500).json({ error: 'No se pudo abrir el documento.' });
+  }
+});
+
+app.post('/api/documento/:id/revisar', auth, async (req, res) => {
+  try {
+    const ok = req.body.correcto !== false;
+    const r = await q(
+      `UPDATE buro_documentos SET revisado=$1, revisado_por=$2, revisado_en=NOW(), nota=$3
+       WHERE id=$4 AND purgado IS NULL RETURNING id, tipo, revisado`,
+      [ok, req.user.u, (req.body.nota || '').slice(0, 300), req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Documento no disponible.' });
+    res.json(r.rows[0]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/documento/:id', auth, async (req, res) => {
+  try {
+    await q(`UPDATE buro_documentos SET imagen='', purgado=NOW() WHERE id=$1`, [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+async function purgaDocumentos() {
+  try {
+    const r = await q(
+      `UPDATE buro_documentos SET imagen='', purgado=NOW()
+       WHERE purgado IS NULL AND purgar IS NOT NULL AND purgar < CURRENT_DATE RETURNING id`);
+    if (r.rows.length) console.log('Documentos purgados por vencimiento:', r.rows.length);
+  } catch (e) {
+    console.error('purgaDocumentos:', e.message);
+  }
+}
 
 /* ---------- RFC sugerido ---------- */
 app.post('/api/rfc', auth, (req, res) => {
@@ -1075,14 +1230,22 @@ app.get('/api/hojas.pdf', auth, (req, res) => {
 /* Subir la hoja firmada con pluma. Equivale a la firma en pantalla. */
 app.post('/api/solicitudes/:id/firma-papel', auth, async (req, res) => {
   try {
-    const img = req.body.imagen || '';
-    if (!/^data:image\/(jpe?g|png|webp);base64,/.test(img)) {
-      return res.status(400).json({ error: 'Manda una foto de la hoja firmada.' });
+    const dr = await q(
+      `SELECT id, imagen, revisado FROM buro_documentos
+       WHERE solicitud_id=$1 AND tipo='hoja' AND purgado IS NULL ORDER BY id DESC LIMIT 1`,
+      [req.params.id]);
+    if (!dr.rows.length) return res.status(400).json({ error: 'Primero sube la foto de la hoja firmada.' });
+    if (!dr.rows[0].revisado) {
+      return res.status(400).json({ error: 'Revisa la hoja y marcala como correcta antes de registrarla.' });
     }
-    const bytes = Math.round((img.length - img.indexOf(',') - 1) * 0.75);
-    if (bytes > 4 * 1024 * 1024) {
-      return res.status(413).json({ error: 'La foto pesa más de 4 MB. Tómala con menos resolución.' });
+    const ine = await q(
+      `SELECT revisado FROM buro_documentos
+       WHERE solicitud_id=$1 AND tipo='ine' AND purgado IS NULL ORDER BY id DESC LIMIT 1`,
+      [req.params.id]);
+    if (!ine.rows.length || !ine.rows[0].revisado) {
+      return res.status(400).json({ error: 'Falta subir y revisar la identificacion del cliente.' });
     }
+    const img = descifra(dr.rows[0].imagen);
 
     const r = await q('SELECT * FROM buro_solicitudes WHERE id=$1', [req.params.id]);
     if (!r.rows.length) return res.status(404).json({ error: 'No existe esa solicitud.' });
@@ -1210,8 +1373,13 @@ process.on('uncaughtException', e => console.error('uncaught:', e.message));
 process.on('unhandledRejection', e => console.error('unhandled:', (e && e.message) || e));
 
 initDB()
+  .then(() => {
+    purgaDocumentos();
+    setInterval(purgaDocumentos, 24 * 3600 * 1000);
+  })
   .then(() => app.listen(PORT, () => {
     console.log('Buró LMV Credia escuchando en ' + PORT + (MOFFIN_MOCK ? ' [MODO SIMULADO]' : ' [PRODUCCIÓN]'));
+    if (!docsListo()) console.log('Aviso: sin DOCS_KEY no se pueden resguardar INE ni hojas firmadas.');
   }))
   .catch(e => {
     console.error('No arrancó. Error de base de datos:');
