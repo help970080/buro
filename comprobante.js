@@ -10,6 +10,7 @@ const PDFDocument = require('pdfkit');
 
 const TINTA = '#12263A';
 const GRIS = '#6B7A88';
+const TINTA2 = '#2C4A63';
 const LINEA = '#D8D2C6';
 
 function fechaLarga(f) {
@@ -185,22 +186,24 @@ function hojaEnBlanco(doc, d) {
   const caja = (ANCHO - 16) / 2;
   ['FOLIO DE SOLICITUD', 'FOLIO DE CONSULTA BC'].forEach(function (t, i) {
     const x = M + i * (caja + 16);
-    doc.rect(x, y, caja, 32).lineWidth(0.8).strokeColor(LINEA).stroke();
-    doc.font('Helvetica').fontSize(6.5).fillColor(GRIS).text(t, x + 7, y + 5);
+    doc.rect(x, y, caja, 34).lineWidth(1.2).strokeColor('#000000').stroke();
+    doc.font('Helvetica-Bold').fontSize(7.5).fillColor(TINTA).text(t, x + 7, y + 5);
   });
-  y += 44;
+  y += 46;
 
   /* Lugar y fecha */
-  doc.font('Helvetica').fontSize(9).fillColor(TINTA)
+  doc.font('Helvetica').fontSize(9.5).fillColor('#000000')
     .text('_______________________, a ______ de ____________________ de 20______.',
       M, y, { width: ANCHO, align: 'right' });
   y = doc.y + 16;
 
   /* Nombre del titular */
-  doc.font('Helvetica').fontSize(7).fillColor(GRIS)
+  doc.font('Helvetica-Bold').fontSize(7.5).fillColor(TINTA)
     .text('NOMBRE COMPLETO DEL TITULAR DE LA INFORMACIÓN', M, y);
-  doc.moveTo(M, y + 26).lineTo(M + ANCHO, y + 26).lineWidth(0.8).strokeColor(TINTA).stroke();
-  y += 38;
+  doc.font('Helvetica').fontSize(7.5).fillColor(TINTA2)
+    .text('Todos los datos con letra de molde, antes de firmar', M + 215, y + 0.5);
+  doc.moveTo(M, y + 27).lineTo(M + ANCHO, y + 27).lineWidth(1.2).strokeColor('#000000').stroke();
+  y += 40;
 
   /* Cuerpo: texto literal del Anexo A */
   const parrafos = [
@@ -225,7 +228,7 @@ function hojaEnBlanco(doc, d) {
     'la fecha de firma de la presente los poderes que me han sido otorgados no me han sido revocados, ' +
     'limitados, ni modificados en forma alguna.'
   ];
-  doc.font('Helvetica').fontSize(8.2).fillColor(TINTA);
+  doc.font('Helvetica').fontSize(8).fillColor('#000000');
   parrafos.forEach(function (p) {
     doc.text(p, M, y, { width: ANCHO, align: 'justify', lineGap: 1.2 });
     y = doc.y + 9;
@@ -234,47 +237,47 @@ function hojaEnBlanco(doc, d) {
 
   /* Datos del titular que Buró exige en la autorización */
   function renglon(etiqueta, x, yy, ancho) {
-    doc.font('Helvetica').fontSize(6.5).fillColor(GRIS).text(etiqueta.toUpperCase(), x, yy);
-    doc.moveTo(x, yy + 21).lineTo(x + ancho, yy + 21).lineWidth(0.8).strokeColor(TINTA).stroke();
-    return yy + 30;
+    doc.font('Helvetica-Bold').fontSize(7.5).fillColor(TINTA).text(etiqueta.toUpperCase(), x, yy);
+    doc.moveTo(x, yy + 22).lineTo(x + ancho, yy + 22).lineWidth(1.2).strokeColor('#000000').stroke();
+    return yy + 34;
   }
 
-  const c2 = (ANCHO - 18) / 2;
-  const c3 = (ANCHO - 36) / 3;
+  const c2 = (ANCHO - 20) / 2;
+  const c3 = (ANCHO - 40) / 3;
   let yI = renglon('RFC con homoclave', M, y, c2);
-  renglon('CURP', M + c2 + 18, y, c2);
+  renglon('CURP', M + c2 + 20, y, c2);
   y = yI;
   y = renglon('Domicilio: calle y número', M, y, ANCHO);
   yI = renglon('Colonia', M, y, c3);
-  renglon('Municipio o delegación', M + c3 + 18, y, c3);
-  renglon('Estado', M + (c3 + 18) * 2, y, c3);
+  renglon('Municipio o delegación', M + c3 + 20, y, c3);
+  renglon('Estado', M + (c3 + 20) * 2, y, c3);
   y = yI;
   yI = renglon('Código postal', M, y, c3);
-  renglon('Teléfono', M + c3 + 18, y, c3);
-  y = yI + 8;
+  renglon('Teléfono', M + c3 + 20, y, c3);
+  y = yI + 10;
 
   /* Firma */
-  doc.font('Helvetica').fontSize(8).fillColor(TINTA)
+  doc.font('Helvetica-Bold').fontSize(8.5).fillColor(TINTA)
     .text('Firmas del Anexo A que celebran LAS PARTES:', M, y);
   y += 18;
 
   doc.rect(M + (ANCHO - 300) / 2, y, 300, 74)
-    .lineWidth(0.8).strokeColor(LINEA).stroke();
+    .lineWidth(1.2).strokeColor('#000000').stroke();
   y += 84;
   doc.moveTo(M + (ANCHO - 260) / 2, y).lineTo(M + (ANCHO + 260) / 2, y)
-    .lineWidth(0.8).strokeColor(TINTA).stroke();
+    .lineWidth(1.2).strokeColor('#000000').stroke();
   doc.font('Helvetica').fontSize(8).fillColor(TINTA)
     .text('El "Titular de la Información"', M, y + 5, { width: ANCHO, align: 'center' });
-  doc.font('Helvetica').fontSize(6.5).fillColor(GRIS)
-    .text('Firma autógrafa', M, y + 17, { width: ANCHO, align: 'center' });
+  doc.font('Helvetica').fontSize(7.5).fillColor(TINTA2)
+    .text('Firma autógrafa con bolígrafo', M, y + 17, { width: ANCHO, align: 'center' });
   y += 34;
 
   /* Uso interno */
-  doc.moveTo(M, y).lineTo(M + ANCHO, y).lineWidth(0.6).strokeColor(LINEA).stroke();
+  doc.moveTo(M, y).lineTo(M + ANCHO, y).lineWidth(0.8).strokeColor('#000000').stroke();
   y += 8;
-  const cu = (ANCHO - 18) / 2;
+  const cu = (ANCHO - 20) / 2;
   renglon('Nombre de quien recaba la autorización', M, y, cu);
-  renglon('Fecha de consulta BC', M + cu + 18, y, cu);
+  renglon('Fecha de consulta BC', M + cu + 20, y, cu);
 }
 
 /* Genera N hojas en blanco para que el vendedor las lleve impresas */
