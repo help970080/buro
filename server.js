@@ -25,6 +25,7 @@ const { calculaRFC, verificaRFC } = require('./rfc');
 const { resumeReporte, semaforoSugerido } = require('./buro');
 const { generaPDF, generaHojaBlanco } = require('./comprobante');
 const { generaReportePDF } = require('./reporte');
+const { evalua } = require('./evaluacion');
 
 const app = express();
 app.use(express.json({ limit: '12mb' }));
@@ -977,6 +978,7 @@ async function consultarMoffin(solicitudId, tipo, opciones) {
     const score = lectura.score;
     const resumen = Object.assign({}, lectura, semaforoSugerido(lectura));
     delete resumen.error_lectura;
+    try { resumen.evaluacion = evalua(out.payload, lectura); } catch (e) { /* opcional */ }
     await q(
       `INSERT INTO buro_consultas(solicitud_id, tipo, curp, rfc, score, resumen, payload, folio_moffin, simulada, mes)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
@@ -1089,9 +1091,11 @@ async function datosReporte(solicitudId) {
     `SELECT * FROM buro_consultas WHERE solicitud_id=$1 AND error IS NULL
      ORDER BY (tipo='reporte') DESC, id DESC LIMIT 1`, [solicitudId]);
   if (!c.rows.length) return null;
+  const res = c.rows[0].resumen || resumeReporte(c.rows[0].payload);
   return {
     payload: c.rows[0].payload,
-    resumen: c.rows[0].resumen || resumeReporte(c.rows[0].payload),
+    resumen: res,
+    evaluacion: (res && res.evaluacion) || null,
     solicitud: s.rows[0],
     consultada: c.rows[0].consultada,
     folio_bc: c.rows[0].folio_moffin
