@@ -736,6 +736,60 @@
 
     if ($('d_docs')) pintaDocs();
 
+    /* Comprobante de autorización */
+    var pdf = $('d_pdf');
+    if (pdf) pdf.addEventListener('click', function(){
+      bajaArchivo('/api/solicitudes/' + actual + '/comprobante.pdf',
+                  'autorizacion-' + actual + '.pdf', true);
+    });
+
+    /* Reporte de crédito */
+    var rp = $('d_reppdf');
+    if (rp) rp.addEventListener('click', function(){
+      bajaArchivo('/api/solicitudes/' + actual + '/reporte.pdf',
+                  'reporte-' + actual + '.pdf', true);
+    });
+
+    /* Código nuevo para el cliente */
+    var rn = $('d_renovar');
+    if (rn) rn.addEventListener('click', function(){
+      api('/api/solicitudes/' + actual + '/renovar', {method:'POST', body:{}})
+        .then(function(){ abre(actual); })
+        .catch(function(e){ alert(e.message); });
+    });
+
+    /* Consultar score o reporte completo */
+    ['d_score','d_reporte'].forEach(function(bid){
+      var b = $(bid);
+      if (!b) return;
+      b.addEventListener('click', function(){
+        consulta(bid === 'd_reporte' ? 'reporte' : 'score', false);
+      });
+    });
+
+    /* Guardar dictamen */
+    var g = $('d_guardar');
+    if (g) g.addEventListener('click', function(){
+      g.disabled = true;
+      api('/api/solicitudes/' + actual + '/dictamen', {method:'POST', body:{
+        semaforo: $('d_sem').value,
+        monto_sugerido: $('d_monto').value,
+        notas: $('d_notas').value
+      }}).then(function(){ abre(actual); lista(); })
+      .catch(function(e){ g.disabled = false; msg('d_msg', e.message, 'err'); });
+    });
+
+    /* Revisión de datos antes de consultar */
+    if ($('d_revision')){
+      api('/api/solicitudes/' + actual + '/revisar').then(function(v){
+        if (!$('d_revision')) return;
+        $('d_revision').innerHTML = v.listo
+          ? '<div class="msg ok" style="display:block">Los datos cumplen lo que pide Buró. Listo para consultar.</div>'
+          : '<div class="msg err" style="display:block"><b>Antes de consultar, faltan:</b><br>' +
+            esc(v.faltan.join(' · ')) + '</div>';
+      }).catch(function(){});
+    }
+
     var cp = $('d_copiar');
     if (cp) cp.addEventListener('click', function(){
       var el = $('d_url');
@@ -760,14 +814,31 @@
   }
 
   /* ---- Exportar ---- */
-  function bajaArchivo(ruta, nombre){
+  function bajaArchivo(ruta, nombre, verEnPantalla){
     fetch(ruta, {headers:{'authorization':'Bearer ' + tok}})
       .then(function(r){
-        if (!r.ok) return r.json().then(function(j){ throw new Error(j.error || 'No se pudo generar.'); });
+        if (!r.ok) {
+          return r.text().then(function(t){
+            var m = 'No se pudo generar el archivo.';
+            try { m = JSON.parse(t).error || m; } catch(e){ if (t) m = t.slice(0, 200); }
+            throw new Error(m);
+          });
+        }
         return r.blob();
       })
       .then(function(b){
+        if (!b || b.size < 100) throw new Error('El archivo llegó vacío. Intenta de nuevo.');
         var u = URL.createObjectURL(b);
+        if (verEnPantalla){
+          var w = window.open(u, '_blank');
+          if (!w){
+            var a2 = document.createElement('a');
+            a2.href = u; a2.download = nombre;
+            document.body.appendChild(a2); a2.click(); document.body.removeChild(a2);
+          }
+          setTimeout(function(){ URL.revokeObjectURL(u); }, 60000);
+          return;
+        }
         var a = document.createElement('a');
         a.href = u; a.download = nombre;
         document.body.appendChild(a); a.click();
@@ -778,12 +849,12 @@
     bajaArchivo('/api/export/autorizaciones', 'autorizaciones.csv');
   });
   $('bexportapdf').addEventListener('click', function(){
-    bajaArchivo('/api/export/comprobantes.pdf', 'autorizaciones.pdf');
+    bajaArchivo('/api/export/comprobantes.pdf', 'autorizaciones.pdf', true);
   });
   $('bhojas').addEventListener('click', function(){
     var n = prompt('¿Cuántas hojas quieres imprimir?', '10');
     if (!n) return;
-    window.open('/api/hojas.pdf?n=' + encodeURIComponent(n) + '&t=' + encodeURIComponent(tok), '_blank');
+    bajaArchivo('/api/hojas.pdf?n=' + encodeURIComponent(n), 'hojas-autorizacion.pdf', true);
   });
 
   if (tok) arranca();
