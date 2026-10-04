@@ -148,7 +148,11 @@
     <div class="listo">
       <div class="palomita">&#10003;</div>
       <h2>Listo, quedó registrada</h2>
-      <p class="guia">Ya no tienes que hacer nada más. Quien te atendió se comunicará contigo.</p>
+      <p class="guia" id="p4_texto">Ya no tienes que hacer nada más. Quien te atendió se comunicará contigo.</p>
+      <div id="p4_volver" class="oculto">
+        <button id="btn_panel" type="button">Volver al panel</button>
+        <p class="guia" style="margin:10px 0 0;font-size:13px" id="p4_cuenta"></p>
+      </div>
     </div>
   </section>
 
@@ -160,6 +164,7 @@
   'use strict';
   var tok = '';
   var texto = '';
+  var esPresencial = false;
 
   function $(id){ return document.getElementById(id); }
   function ver(id){
@@ -233,6 +238,7 @@
     if (!carga || !carga.token) return false;
     tok = carga.token;
     texto = carga.texto || '';
+    esPresencial = true;
     var d = carga.datos || {};
     $('f_nombre').value = d.nombre || '';
     $('f_ap').value = d.apellido_p || '';
@@ -388,11 +394,32 @@
       $('btn3').disabled = false; $('btn3').textContent = 'Enviar autorización';
       if(!o.ok){ msg('m3', o.j.error || 'No se pudo enviar.', 'err'); return; }
       ver('p4');
+      if (esPresencial) terminaPresencial();
     }).catch(function(){
       $('btn3').disabled = false; $('btn3').textContent = 'Enviar autorización';
       msg('m3','No hay conexión. Revisa tu internet e intenta otra vez.','err');
     });
   });
+  /* Firma presencial: el operador sigue trabajando, lo regresamos al panel */
+  function terminaPresencial(){
+    $('p4_texto').textContent = 'La autorización quedó registrada. Ya puedes consultar.';
+    $('p4_volver').classList.remove('oculto');
+    $('btn_panel').addEventListener('click', alPanel);
+    var seg = 5;
+    $('p4_cuenta').textContent = 'Regresando al panel en ' + seg + ' segundos...';
+    var t = setInterval(function(){
+      seg--;
+      if (seg <= 0){ clearInterval(t); alPanel(); return; }
+      $('p4_cuenta').textContent = 'Regresando al panel en ' + seg + ' segundos...';
+    }, 1000);
+  }
+
+  function alPanel(){
+    /* Si el panel abrió esta pestaña, la cerramos y él sigue vivo detrás */
+    if (window.opener && !window.opener.closed){ window.close(); }
+    location.href = '/panel';
+  }
+
   arrancaPresencial();
 })();
 </script>
