@@ -297,7 +297,7 @@
         <div><label for="u_rol">Rol</label>
           <select id="u_rol"><option value="gerente">Gerente (solo su agencia)</option><option value="admin">Administrador</option></select></div>
         <div><label for="u_agencia">Agencia</label><input id="u_agencia" type="text" list="dl_agencias" placeholder="Igual que en las solicitudes"></div>
-        <div><label for="u_tope">Tope de consultas al mes</label><input id="u_tope" type="number" min="0" value="20"></div>
+        <div><label for="u_tope">Tope de consultas al mes (de la agencia)</label><input id="u_tope" type="number" min="0" value="20"></div>
       </div>
       <datalist id="dl_agencias"></datalist>
       <div id="musu" class="msg"></div>
@@ -305,7 +305,7 @@
     </section>
     <section class="tarjeta">
       <h2>Usuarios</h2>
-      <div style="font-size:12.5px;color:#6B7A88;margin-bottom:10px">El gerente solo ve y crea solicitudes de su agencia, consulta score hasta su tope y ve el dictamen. No ve el reporte ni exporta.</div>
+      <div style="font-size:12.5px;color:#6B7A88;margin-bottom:10px">El gerente solo ve y crea solicitudes de su agencia, consulta score hasta el tope de su agencia (es uno solo para todos sus usuarios: vale el mayor) y ve el dictamen. No ve el reporte ni exporta.</div>
       <div id="musu2" class="msg"></div>
       <div id="tablaUsu" class="scroll-x"></div>
     </section>
@@ -437,7 +437,7 @@
       ROL = c.rol || 'admin'; MI_AGENCIA = c.agencia || '';
       var t;
       if (gerente() && c.mia){
-        t = 'Mis consultas: <b>' + c.mia.usadas + '</b> / ' + c.mia.tope + ' · ' + esc(MI_AGENCIA);
+        t = 'Consultas de la agencia: <b>' + c.mia.usadas + '</b> / ' + c.mia.tope + ' · ' + esc(MI_AGENCIA);
       } else {
         t = '<b>' + c.usadas + '</b> / ' + c.incluidas + ' consultas · ' + c.mes;
         if (c.excedidas > 0) t += ' · <b style="color:#FFD9A0">' + c.excedidas + ' extra</b>';

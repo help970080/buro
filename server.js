@@ -413,6 +413,19 @@ async function tieneINE(solicitudId) {
   return r.rows.length > 0;
 }
 
+/* Tope POR AGENCIA: suman todas las consultas del mes de las solicitudes de esa agencia (las haga quien las
+   haga) contra el tope de la agencia = el mayor tope_mes de sus gerentes activos. Así una agencia con varios
+   usuarios (p. ej. admin y supervisores que entran desde CobraPro) no multiplica su cupo. */
+async function usadasAgencia(agencia) {
+  const r = await q(`SELECT COUNT(*)::int AS n FROM buro_consultas c JOIN buro_solicitudes s ON s.id = c.solicitud_id
+    WHERE UPPER(TRIM(s.agencia))=$1 AND c.mes=$2 AND c.error IS NULL AND c.simulada=FALSE`, [normAg(agencia), mesMX()]);
+  return r.rows[0].n;
+}
+async function topeAgencia(agencia) {
+  const r = await q(`SELECT COALESCE(MAX(tope_mes),0)::int AS t FROM buro_usuarios
+    WHERE COALESCE(rol,'admin')='gerente' AND activo=TRUE AND UPPER(TRIM(agencia))=$1`, [normAg(agencia)]);
+  return r.rows[0].t;
+}
 async function usadasUsuario(usuario) {
   const r = await q(`SELECT COUNT(*)::int AS n FROM buro_consultas
     WHERE usuario=$1 AND mes=$2 AND error IS NULL AND simulada=FALSE`, [usuario, mesMX()]);
@@ -635,7 +648,7 @@ app.get('/api/cuota', auth, async (req, res) => {
     const c = await cuotaMes();
     c.rol = req.user.rol;
     c.agencia = req.user.agencia;
-    if (esGerente(req)) c.mia = { usadas: await usadasUsuario(req.user.u), tope: req.user.tope };
+    if (esGerente(req)) c.mia = { usadas: await usadasAgencia(req.user.agencia), tope: await topeAgencia(req.user.agencia) };
     res.json(c);
   }
   catch (e) { res.status(500).json({ error: e.message }); }
@@ -1281,10 +1294,10 @@ async function consultaAutomatica(solicitudId, creador) {
     return;
   }
   if (creador) {
-    const u = await q('SELECT COALESCE(rol,\'admin\') AS rol, COALESCE(tope_mes,0) AS tope FROM buro_usuarios WHERE usuario=$1', [creador]);
+    const u = await q('SELECT COALESCE(rol,\'admin\') AS rol, agencia FROM buro_usuarios WHERE usuario=$1', [creador]);
     if (u.rows.length && u.rows[0].rol === 'gerente') {
       const c = await cuotaMes();
-      if (c.restantes <= 0 || (await usadasUsuario(creador)) >= u.rows[0].tope) {
+      if (c.restantes <= 0 || (await usadasAgencia(u.rows[0].agencia)) >= (await topeAgencia(u.rows[0].agencia))) {
         console.log('Consulta automática omitida (tope/cuota del gerente):', creador, solicitudId);
         return;
       }
@@ -1429,9 +1442,9 @@ app.post('/api/solicitudes/:id/consultar', auth, alcance, async (req, res) => {
       if (c.restantes <= 0) {
         return res.status(403).json({ error: 'Se agotaron las consultas del mes. Pide al administrador que la haga.' });
       }
-      const mias = await usadasUsuario(req.user.u);
-      if (mias >= req.user.tope) {
-        return res.status(403).json({ error: 'Llegaste a tu tope de ' + req.user.tope + ' consultas este mes. Pide al administrador que lo amplíe.' });
+      const tope = await topeAgencia(req.user.agencia);
+      if ((await usadasAgencia(req.user.agencia)) >= tope) {
+        return res.status(403).json({ error: 'Tu agencia llegó a su tope de ' + tope + ' consultas este mes. Pide al administrador que lo amplíe.' });
       }
     }
     if (c.restantes <= 0 && !req.body.confirmado) {
