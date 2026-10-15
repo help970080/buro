@@ -27,6 +27,7 @@ const { generaPDF, generaHojaBlanco } = require('./comprobante');
 const { generaReportePDF } = require('./reporte');
 const { evalua } = require('./evaluacion');
 const { interpretaScore } = require('./razones');
+const { cotejo } = require('./cotejo');
 
 const app = express();
 app.use(express.json({ limit: '12mb' }));
@@ -816,6 +817,7 @@ app.get('/api/solicitudes/:id', auth, alcance, async (req, res) => {
     /* Interpretación de las claves de razón (se calcula al leer: aplica también a consultas viejas) */
     consultas.forEach(function (x) {
       if (x.error || !x.payload) return;
+      try { x.cotejo = cotejo(s.rows[0], x.payload, claveEstado); } catch (e) { /* opcional */ }
       try {
         const lect = resumeReporte(x.payload);
         x.interpretacion = interpretaScore(Object.assign({}, x.resumen || lect, {
@@ -1385,7 +1387,14 @@ async function datosReporte(solicitudId) {
      ORDER BY (tipo='reporte') DESC, id DESC LIMIT 1`, [solicitudId]);
   if (!c.rows.length) return null;
   const res = c.rows[0].resumen || resumeReporte(c.rows[0].payload);
+  const a = await q(`SELECT aceptada, modo, lugar, funcionario, ip, vence FROM buro_autorizaciones
+                     WHERE solicitud_id=$1 ORDER BY id DESC LIMIT 1`, [solicitudId]);
+  let cot = null;
+  try { cot = cotejo(s.rows[0], c.rows[0].payload, claveEstado); } catch (e) { /* opcional */ }
   return {
+    cotejo: cot,
+    autorizacion: a.rows[0] || null,
+    consulta: { tipo: c.rows[0].tipo, usuario: c.rows[0].usuario || '' },
     payload: c.rows[0].payload,
     resumen: res,
     evaluacion: (res && res.evaluacion) || null,
@@ -1492,6 +1501,9 @@ app.get('/api/export/autorizaciones', auth, soloAdmin, async (req, res) => {
               (SELECT bc.folio_moffin FROM buro_consultas bc
                WHERE bc.solicitud_id = s.id AND bc.error IS NULL
                ORDER BY bc.id DESC LIMIT 1) AS folio_consulta,
+              (SELECT bc.payload->'json'->'fileEnd'->>'controlNumber' FROM buro_consultas bc
+               WHERE bc.solicitud_id = s.id AND bc.error IS NULL
+               ORDER BY bc.id DESC LIMIT 1) AS control_bc,
               (a.firma IS NOT NULL) AS con_firma
        FROM buro_autorizaciones a JOIN buro_solicitudes s ON s.id=a.solicitud_id
        WHERE a.aceptada::date BETWEEN $1 AND $2 ORDER BY a.id`, [desde, hasta]);
@@ -1499,13 +1511,13 @@ app.get('/api/export/autorizaciones', auth, soloAdmin, async (req, res) => {
     const cab = ['Folio', 'Nombre', 'Apellido paterno', 'Apellido materno', 'CURP', 'RFC', 'Teléfono',
       'Calle y número', 'Colonia', 'Municipio', 'Estado', 'CP',
       'Lugar de firma', 'Fecha de autorización', 'Vence', 'Con firma',
-      'Funcionario que recabó', 'Modo de firma', 'Folio de consulta BC', 'Fecha de consulta BC',
+      'Funcionario que recabó', 'Modo de firma', 'Folio de consulta BC', 'Número de control BC', 'Fecha de consulta BC',
       'IP', 'Hash del texto', 'Navegador'];
     const filas = r.rows.map(x => [x.folio, x.nombre, x.apellido_p, x.apellido_m, x.curp, x.rfc, x.telefono,
       x.calle, x.colonia, x.municipio, x.estado_dom, x.cp,
       x.lugar, x.aceptada ? new Date(x.aceptada).toISOString() : '',
       x.vence ? x.vence.toISOString().slice(0, 10) : '', x.con_firma ? 'Sí' : 'No',
-      x.funcionario, x.modo || 'remoto', x.folio_bc || x.folio_consulta || '', x.fecha_consulta_bc ? x.fecha_consulta_bc.toISOString().slice(0, 10) : '',
+      x.funcionario, x.modo || 'remoto', x.folio_bc || x.folio_consulta || '', x.control_bc || '', x.fecha_consulta_bc ? x.fecha_consulta_bc.toISOString().slice(0, 10) : '',
       x.ip, x.texto_hash, x.agente].map(esc).join(','));
     const csv = '\uFEFF' + [cab.map(esc).join(',')].concat(filas).join('\r\n');
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');

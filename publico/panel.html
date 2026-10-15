@@ -913,6 +913,27 @@
             if (itp.nota) h += '<div style="margin-top:12px;font-size:12px;color:#64748B;font-style:italic">' + esc(itp.nota) + '</div>';
             h += '</div>';
           }
+          /* Cotejo capturado contra Buró */
+          var ct = c.cotejo;
+          if (ct && ct.filas){
+            var EST = {coincide:['Coincide','#047857','#D1FAE5'], parcial:['Parcial','#B45309','#FEF3C7'], difiere:['No coincide','#B91C1C','#FEE2E2'],
+                       no_comparable:['N/A','#64748B','#F1F5F9'], sin_dato:['Sin dato','#64748B','#F1F5F9']};
+            h += '<h2 style="margin-top:18px">Cotejo con Buró <span style="font-size:12px;font-weight:600;color:#64748B">· ' +
+              ct.resumen.coincide + ' coinciden' + (ct.resumen.difiere ? ', <b style="color:#B91C1C">' + ct.resumen.difiere + ' no coinciden</b>' : '') + '</span></h2>';
+            ct.alertas.forEach(function(t){ h += '<div class="msg err" style="display:block;margin:6px 0">⚠ ' + esc(t) + '</div>'; });
+            h += '<div class="scroll-x"><table style="font-size:13px"><thead><tr><th>Dato</th><th>Capturado</th><th>Buró</th><th>Resultado</th></tr></thead><tbody>' +
+              ct.filas.map(function(f){
+                var e = EST[f.estado] || ['', '#64748B', '#F1F5F9'];
+                return '<tr><td><b>' + esc(f.campo) + '</b></td><td>' + esc(f.capturado || '—') + '</td><td>' + esc(f.buro || '—') + '</td>' +
+                  '<td><span class="pill" style="background:' + e[2] + ';color:' + e[1] + '">' + e[0] + '</span>' +
+                  (f.nota ? '<div style="font-size:11.5px;color:#64748B;margin-top:3px">' + esc(f.nota) + '</div>' : '') + '</td></tr>';
+              }).join('') + '</tbody></table></div>';
+            if (ct.consulta){
+              h += '<div class="dato" style="margin-top:8px"><span>Número de control Buró</span><span>' + esc(ct.consulta.control_bc || '—') + '</span></div>' +
+                '<div class="dato"><span>Modelo de score</span><span>' + esc(ct.consulta.modelo || 'BC Score') + '</span></div>' +
+                '<div class="dato"><span>Expediente encontrado</span><span>' + (ct.consulta.encontrado === false ? 'No' : 'Sí') + '</span></div>';
+            }
+          }
           h += '<div class="dato"><span>Folio de consulta BC</span><span>' +
               esc(c.folio_moffin || '—') + '</span></div>' +
             '<div class="dato"><span>Tipo</span><span>' + esc(c.tipo) + '</span></div>' +

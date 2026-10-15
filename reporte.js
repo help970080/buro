@@ -335,6 +335,80 @@ function generaReportePDF(datos, salida) {
       'Las bandas y la interpretación son referencia interna de LMV Credia y no sustituyen el criterio del analista.', M, y, { width: ANCHO });
   y += 14;
 
+  /* Cotejo: capturado contra Buró */
+  const cot = datos.cotejo;
+  if (cot && cot.filas && cot.filas.length) {
+    const alto = 26 + cot.filas.length * 12 + (cot.alertas.length ? 6 + cot.alertas.length * 10 : 0);
+    y = salto(doc, y, alto + 20, M);
+    y = barra(doc, 'Cotejo de identidad y domicilio · capturado contra Buró', y, M, ANCHO);
+    if (cot.alertas.length) {
+      const hA = 4 + cot.alertas.length * 10;
+      doc.rect(M, y, ANCHO, hA).fill('#FDECEA');
+      cot.alertas.forEach(function (t, i) {
+        doc.font('Helvetica-Bold').fontSize(6.8).fillColor(ROJO).text('!  ' + t, M + 6, y + 3 + i * 10, { width: ANCHO - 12 });
+      });
+      y += hA + 3;
+    }
+    const cx = [M + 4, M + 100, M + 228, M + 356];
+    doc.rect(M, y, ANCHO, 11).fill(GRISCLARO);
+    ['Dato', 'Capturado', 'Reportado por Buró', 'Resultado'].forEach(function (t, i) {
+      doc.font('Helvetica-Bold').fontSize(6.4).fillColor(NEGRO).text(t, cx[i], y + 2.5);
+    });
+    y += 12;
+    const EST = {
+      coincide: ['COINCIDE', VERDE], parcial: ['PARCIAL', AMBAR], difiere: ['NO COINCIDE', ROJO],
+      no_comparable: ['N/A', GRIS], sin_dato: ['SIN DATO', GRIS]
+    };
+    cot.filas.forEach(function (f, i) {
+      if (i % 2) doc.rect(M, y - 1, ANCHO, 12).fill('#FAF8F4');
+      const e = EST[f.estado] || ['', GRIS];
+      doc.font('Helvetica-Bold').fontSize(6.6).fillColor(NEGRO).text(f.campo, cx[0], y + 1.5, { width: 104, height: 9, ellipsis: true });
+      doc.font('Helvetica').fontSize(6.6).fillColor(NEGRO)
+        .text(f.capturado || '—', cx[1], y + 1.5, { width: 124, height: 9, ellipsis: true })
+        .text(f.buro || '—', cx[2], y + 1.5, { width: 124, height: 9, ellipsis: true });
+      doc.roundedRect(cx[3], y, 46, 9.5, 2).fill(e[1]);
+      doc.font('Helvetica-Bold').fontSize(5.6).fillColor('#FFFFFF').text(e[0], cx[3], y + 2.2, { width: 46, align: 'center' });
+      if (f.nota) {
+        doc.font('Helvetica').fontSize(5.8).fillColor(GRIS).text(f.nota, cx[3] + 50, y + 2, { width: ANCHO - (cx[3] - M) - 54, height: 9, ellipsis: true });
+      }
+      y += 12;
+    });
+    y += 4;
+  }
+
+  /* Datos de la consulta: evidencia de qué se consultó y con qué autorización */
+  if (cot || datos.autorizacion) {
+    const cq = (cot && cot.consulta) || {};
+    const au = datos.autorizacion || {};
+    const cons = datos.consulta || {};
+    const pares = [
+      ['Tipo de consulta', cq.tipo || (cons.tipo === 'reporte' ? 'Reporte completo' : 'Score')],
+      ['Folio de consulta', datos.folio_bc || '—'],
+      ['Número de control Buró', cq.control_bc || '—'],
+      ['Modelo de score', cq.modelo || 'BC Score'],
+      ['Expediente encontrado', cq.encontrado === false ? 'No' : 'Sí'],
+      ['Consultó', cons.usuario || '—'],
+      ['Fecha y hora de consulta', datos.consultada ? new Date(datos.consultada).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' }) : '—'],
+      ['Autorización firmada', au.aceptada ? new Date(au.aceptada).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' }) : '—'],
+      ['Modo de firma', au.modo === 'presencial' ? 'Presencial (en pantalla)' : (au.modo === 'papel' ? 'Hoja firmada' : (au.aceptada ? 'A distancia (folio y código)' : '—'))],
+      ['Lugar de firma', au.lugar || '—'],
+      ['Recabó la firma', au.funcionario || '—'],
+      ['Autorización vigente hasta', au.vence ? new Date(au.vence).toISOString().slice(0, 10) : '—']
+    ];
+    const filasP = Math.ceil(pares.length / 2);
+    y = salto(doc, y, filasP * 12 + 24, M);
+    y = barra(doc, 'Datos de la consulta y autorización', y, M, ANCHO);
+    const mitad = ANCHO / 2;
+    pares.forEach(function (pr, i) {
+      const col = i < filasP ? 0 : 1;
+      const fy = y + (i % filasP) * 12;
+      const fx = M + 4 + col * mitad;
+      doc.font('Helvetica').fontSize(6.6).fillColor(GRIS).text(pr[0], fx, fy + 1, { width: 110 });
+      doc.font('Helvetica-Bold').fontSize(6.8).fillColor(NEGRO).text(String(pr[1]), fx + 112, fy + 1, { width: mitad - 124, height: 9, ellipsis: true });
+    });
+    y += filasP * 12 + 6;
+  }
+
   /* Domicilios */
   const doms = lista(per.Domicilios, 'Domicilio');
   y = barra(doc, 'Domicilio(s) reportado(s)', y, M, ANCHO);
@@ -358,7 +432,7 @@ function generaReportePDF(datos, salida) {
     const fila = [
       [d.Direccion1, d.Direccion2].filter(Boolean).join(' '),
       d.ColoniaPoblacion || '', d.DelegacionMunicipio || d.Ciudad || '',
-      d.Estado || '', d.CP || '', d.NumeroTelefono || ''
+      d.Estado || '', d.CP || '', d.NumeroTelefono || 'No reportado'
     ];
     doc.font('Helvetica').fontSize(6.6).fillColor(NEGRO);
     let x = M + 3, alto = 0;
