@@ -8,7 +8,7 @@
 
 'use strict';
 
-const { monto, entero, fechaBuro } = require('./buro');
+const { monto, entero, fechaBuro, normaliza } = require('./buro');
 
 function lista(nodo, llave) {
   if (!nodo) return [];
@@ -45,6 +45,7 @@ function esCreditoChico(c) {
  */
 function evalua(payload, resumen) {
   const r = resumen || {};
+  payload = normaliza(payload);
   const per = lista(payload && payload.return && payload.return.Personas, 'Persona')[0] || {};
   const cuentas = lista(per.Cuentas, 'Cuenta');
 

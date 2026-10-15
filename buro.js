@@ -36,6 +36,40 @@ function fechaBuro(v) {
   return s.slice(4) + '-' + s.slice(2, 4) + '-' + s.slice(0, 2);
 }
 
+/* Moffin entrega dos formas de respuesta:
+   - Reporte (bureau_pf):   { return: { Personas: { Persona: [...] } } }
+   - Score (prospector_pf): { json: { name, score:{value,code,cause1..}, address }, intl }
+   normaliza() convierte la segunda a la forma de Buró para que un solo lector sirva para ambas. */
+function normaliza(payload) {
+  if (!payload || payload.return || !payload.json || typeof payload.json !== 'object') return payload;
+  const j = payload.json;
+  const nm = j.name || {};
+  const sc = j.score || null;
+  const ad = j.address || null;
+  const limpia = function (v) {
+    const t = String(v || '').trim();
+    return /^NO PROPORCIONADO$/i.test(t) ? '' : t;
+  };
+  const per = {
+    Nombre: {
+      PrimerNombre: limpia(nm.firstname), ApellidoPaterno: limpia(nm.firstLastname),
+      ApellidoMaterno: limpia(nm.secondLastname), RFC: nm.rfc || '', CURP: nm.curp || '',
+      FechaNacimiento: nm.birthdate || ''
+    },
+    Cuentas: { Cuenta: [] },
+    ScoreBuroCredito: sc ? { ScoreBC: [{
+      ValorScore: sc.value, NombreScore: sc.name || '', CodigoScore: sc.code || '',
+      CodigoRazon1: sc.cause1 || '', CodigoRazon2: sc.cause2 || '', CodigoRazon3: sc.cause3 || '', CodigoRazon4: sc.cause4 || ''
+    }] } : null,
+    Domicilios: ad ? { Domicilio: [{
+      Direccion1: ad.address || '', ColoniaPoblacion: ad.neighborhood || '',
+      DelegacionMunicipio: ad.municipality || '', Ciudad: ad.city || '', Estado: ad.state || '', CP: ad.zipCode || ''
+    }] } : null,
+    Encontrado: j.header ? j.header.wasFound !== '0' : true
+  };
+  return Object.assign({}, payload, { return: { Personas: { Persona: [per] } }, origen: 'prospector' });
+}
+
 /* Score: valores negativos son códigos, no calificaciones.
    -008 = sin información suficiente para generar score. */
 function leeScore(persona) {
@@ -157,6 +191,7 @@ function resumeReporte(payload) {
   };
 
   try {
+    payload = normaliza(payload);
     const per = lista(payload && payload.return && payload.return.Personas, 'Persona')[0];
     if (!per) return base;
     base.ok = true;
@@ -311,4 +346,4 @@ function semaforoSugerido(r) {
   return { semaforo: sem, razones: razones };
 }
 
-module.exports = { resumeReporte, semaforoSugerido, monto, entero, fechaBuro, leeMensajesAlerta, POS_ALERTA, OBSERVACION };
+module.exports = { normaliza, resumeReporte, semaforoSugerido, monto, entero, fechaBuro, leeMensajesAlerta, POS_ALERTA, OBSERVACION };

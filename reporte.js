@@ -8,7 +8,7 @@
 'use strict';
 
 const PDFDocument = require('pdfkit');
-const { monto, entero, fechaBuro } = require('./buro');
+const { monto, entero, fechaBuro, normaliza } = require('./buro');
 const { evalua, capacidad } = require('./evaluacion');
 
 const NEGRO = '#000000';
@@ -181,6 +181,7 @@ function generaReportePDF(datos, salida) {
   const ANCHO = doc.page.width - M * 2;
   const s = datos.solicitud || {};
   const r = datos.resumen || {};
+  datos.payload = normaliza(datos.payload);
   const per = lista(datos.payload && datos.payload.return && datos.payload.return.Personas, 'Persona')[0] || {};
   const nom = per.Nombre || {};
   const resu = lista(per.ResumenReporte, 'ResumenReporte')[0] || {};
