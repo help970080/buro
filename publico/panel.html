@@ -218,7 +218,7 @@
         <input id="n_agencia" type="text" placeholder="Quién lo solicita">
       </div>
       <div>
-        <label for="n_ine">Credencial de elector (opcional)</label>
+        <label for="n_ine">Foto de la INE (se guarda como evidencia)</label>
         <input id="n_ine" type="file" accept="image/*" style="padding:8px">
       </div>
     </div>
@@ -466,13 +466,34 @@
     b.addEventListener('click', function(){ muestraTab(b.getAttribute('data-tab')); });
   });
 
-  /* ---- Lectura de INE ---- */
-  $('n_ine').addEventListener('change', function(){
-    var f = this.files && this.files[0];
-    if(!f) return;
-    msg('mnueva','Leyendo la credencial...','ok');
+  /* Reduce fotos del celular a máx. 1800 px en JPEG: suben rápido y no pasan de 5 MB */
+  function comprime(f, cb){
     var fr = new FileReader();
     fr.onload = function(){
+      var img = new Image();
+      img.onload = function(){
+        var M = 1800, w = img.width, h = img.height, k = Math.min(1, M / Math.max(w, h));
+        var cv = document.createElement('canvas');
+        cv.width = Math.round(w * k); cv.height = Math.round(h * k);
+        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+        cb(cv.toDataURL('image/jpeg', 0.82));
+      };
+      img.onerror = function(){ cb(fr.result); };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(f);
+  }
+
+  /* ---- Lectura de INE ---- */
+  var ineCreacion = null;
+  $('n_ine').addEventListener('change', function(){
+    var f = this.files && this.files[0];
+    ineCreacion = null;
+    if(!f) return;
+    msg('mnueva','Leyendo la credencial...','ok');
+    comprime(f, function(dataUrl){
+      ineCreacion = dataUrl;
+      var fr = { result: dataUrl };
       api('/api/ine/leer', {method:'POST', body:{imagen: fr.result}})
       .then(function(d){
         if(d.nombre) $('n_nombre').value = d.nombre;
@@ -485,8 +506,7 @@
           ? 'Datos cargados. Revisa la CURP, no tiene el formato esperado.'
           : 'Datos cargados. Revísalos antes de crear.', 'ok');
       }).catch(function(e){ msg('mnueva', e.message, 'err'); });
-    };
-    fr.readAsDataURL(f);
+    });
   });
 
   /* ---- RFC sugerido ---- */
@@ -535,10 +555,16 @@
     .then(function(s){
       $('bnueva').disabled = false;
       ['n_tel','n_agencia','n_nombre','n_ap','n_am','n_curp','n_nac','n_cp','n_ine','n_rfc'].forEach(function(x){ $(x).value=''; });
+      var ineSube = ineCreacion; ineCreacion = null;
       if (gerente()) $('n_agencia').value = MI_AGENCIA;
       $('n_rfc').dataset.tocado = ''; $('n_rfc_nota').textContent = '';
       msg('mnueva','');
       muestraFolio(s);
+      if (ineSube){
+        api('/api/solicitudes/' + s.id + '/documento', {method:'POST', body:{tipo:'ine', imagen: ineSube}})
+          .then(function(){ msg('mllamar','INE guardada como evidencia.','ok'); })
+          .catch(function(e){ msg('mllamar','No se guardó la INE: ' + e.message + ' Súbela desde la solicitud.','err'); });
+      }
       lista();
     }).catch(function(e){
       $('bnueva').disabled = false;
@@ -556,11 +582,12 @@
       '<p style="color:#6B7A88;font-size:13px">Vence en 72 horas. Cliente: <b>' +
         esc([s.nombre,s.apellido_p,s.apellido_m].filter(Boolean).join(' ')) +
         '</b> · Tel: ' + esc(s.telefono) + '</p>' +
-      '<button id="bpresencial" style="width:100%;margin-top:14px">El cliente está aquí — que firme ahora</button>' +
+      '<button id="bfotos" style="width:100%;margin-top:14px">El cliente está aquí — subir hoja firmada e INE</button>' +
       '<button class="claro" id="bllamar" style="width:100%;margin-top:8px">No está: llamarle y dictarle el código</button>' +
       '<div id="mllamar" class="msg"></div>';
     $('detalle').classList.remove('oculto');
-    conectaPresencial();
+    var bf = $('bfotos');
+    if (bf) bf.addEventListener('click', function(){ abre(actual); });
     var b = $('bllamar');
     if (b) b.addEventListener('click', function(){
       b.disabled = true; b.textContent = 'Marcando...';
@@ -597,7 +624,9 @@
     api('/api/solicitudes/' + actual + '/documentos').then(function(d){
       if (!$('d_docs')) return;
       var h = '';
-      ['ine','hoja'].forEach(function(t){
+      var solo = $('d_docs').getAttribute('data-solo');
+      if (solo && d[solo]) { abre(actual); return; }
+      (solo ? [solo] : ['ine','hoja']).forEach(function(t){
         var doc = d[t];
         h += '<div style="padding:11px;border:1px solid ' +
           (doc && doc.revisado ? '#BFE0D1' : '#D8D2C6') + ';border-radius:8px;margin-bottom:9px;background:' +
@@ -627,7 +656,7 @@
         h += '</div>';
       });
 
-      h += d.completo
+      if (!solo) h += d.completo
         ? '<button id="d_regpapel" style="width:100%;margin-top:4px">Registrar autorización y continuar</button>'
         : '<div style="font-size:12.5px;color:#6B7A88;text-align:center;padding:8px">' +
           'Sube y revisa los dos documentos para continuar.</div>';
@@ -647,14 +676,12 @@
         var f = this.files && this.files[0];
         if (!f) return;
         msg('d_mdocs','Subiendo...','ok');
-        var fr = new FileReader();
-        fr.onload = function(){
+        comprime(f, function(dataUrl){
           api('/api/solicitudes/' + actual + '/documento',
-              {method:'POST', body:{tipo: inp.getAttribute('data-sube'), imagen: fr.result}})
+              {method:'POST', body:{tipo: inp.getAttribute('data-sube'), imagen: dataUrl}})
           .then(function(){ msg('d_mdocs',''); pintaDocs(); })
           .catch(function(e){ msg('d_mdocs', e.message, 'err'); });
-        };
-        fr.readAsDataURL(f);
+        });
       });
     });
 
@@ -844,17 +871,17 @@
         h += '<h2 style="margin-top:18px;font-size:13px;letter-spacing:.09em;text-transform:uppercase;color:#6B7A88">Falta la autorización del cliente</h2>' +
 
           '<div style="margin-top:10px;padding:15px;border:2px solid #12263A;border-radius:9px;background:#fff">' +
-          '<b style="font-size:14px">Ya me mandaron INE y hoja firmada</b>' +
+          '<b style="font-size:14px">El cliente está aquí (o te mandó las fotos)</b>' +
           '<div style="font-size:12.5px;color:#6B7A88;margin:5px 0 12px">' +
-          'Sube las dos, revísalas y márcalas correctas. El cliente ya no interviene.</div>' +
+          'Toma foto de la hoja de autorización firmada y de su INE. Revísalas y márcalas correctas. ' +
+          '¿Sin hojas? Imprime hojas en blanco desde la lista de solicitudes.</div>' +
           '<div id="d_docs">Cargando documentos...</div>' +
           '<div id="d_mdocs" class="msg"></div></div>' +
 
           '<div style="margin-top:12px;padding:15px;border:1px solid #D8D2C6;border-radius:9px;background:#FBFAF7">' +
-          '<b style="font-size:13px">El cliente todavía no firma</b>' +
+          '<b style="font-size:13px">El cliente no está: que firme a distancia</b>' +
           '<div style="font-size:12.5px;color:#6B7A88;margin:5px 0 10px">' +
-          'Si lo tienes enfrente, que firme en pantalla. Si no, dícta le los datos por teléfono.</div>' +
-          '<button id="bpresencial" style="width:100%">Está aquí — que firme en pantalla</button>' +
+          'Díctale el folio y el código. La INE se sube aquí antes de consultar.</div>' +
           '<div style="display:flex;gap:10px;margin-top:12px">' +
           '<div class="folio-grande" style="flex:1;margin:0"><small>FOLIO</small>' + esc(s.folio) + '</div>' +
           '<div class="folio-grande" style="flex:1;margin:0"><small>CÓDIGO</small>' + esc(s.codigo) + '</div>' +
@@ -1005,9 +1032,15 @@
         }
       }
 
-      if (!(gerente() && c && !c.error)) h += '<div id="d_revision"></div>';
+      var faltaIne = d.docs && !d.tiene_ine && (s.estado === 'autorizada' || s.estado === 'error');
+      if (!(gerente() && c && !c.error) && !faltaIne) h += '<div id="d_revision"></div>';
 
-      if (gerente()){
+      if (faltaIne){
+        h += '<div style="margin-top:16px;padding:15px;border:2px solid #D97706;border-radius:12px;background:#FFFBEB">' +
+          '<b style="font-size:14px">Falta la INE del cliente</b>' +
+          '<div style="font-size:12.5px;color:#92400E;margin:5px 0 10px">Súbela para resguardar la evidencia. Después se habilita la consulta.</div>' +
+          '<div id="d_docs" data-solo="ine">Cargando...</div><div id="d_mdocs" class="msg"></div></div>';
+      } else if (gerente()){
         if (s.estado === 'autorizada' || s.estado === 'error'){
           h += '<div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">' +
             '<button id="d_score">Consultar score</button></div>';

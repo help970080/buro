@@ -404,6 +404,13 @@ async function alcanceDoc(req, res, next) {
     res.status(500).json({ error: e.message });
   }
 }
+/* Evidencia: la INE del cliente debe estar resguardada antes de consultar */
+async function tieneINE(solicitudId) {
+  const r = await q(`SELECT 1 FROM buro_documentos
+    WHERE solicitud_id=$1 AND tipo='ine' AND purgado IS NULL LIMIT 1`, [solicitudId]);
+  return r.rows.length > 0;
+}
+
 async function usadasUsuario(usuario) {
   const r = await q(`SELECT COUNT(*)::int AS n FROM buro_consultas
     WHERE usuario=$1 AND mes=$2 AND error IS NULL AND simulada=FALSE`, [usuario, mesMX()]);
@@ -840,6 +847,8 @@ app.get('/api/solicitudes/:id', auth, alcance, async (req, res) => {
       autorizaciones: a.rows,
       consultas: consultas,
       dictamen: d.rows[0] || null,
+      tiene_ine: await tieneINE(req.params.id),
+      docs: docsListo(),
       rol: req.user.rol
     });
   } catch (e) {
@@ -1150,6 +1159,10 @@ async function llamaMoffin(sol, tipo) {
 /* Consulta automática al firmar. Se atribuye a quien creó la solicitud;
    si es gerente y ya no tiene tope o cuota, se queda en 'autorizada' para el administrador. */
 async function consultaAutomatica(solicitudId, creador) {
+  if (docsListo() && !(await tieneINE(solicitudId))) {
+    console.log('Consulta automática en espera: falta INE', solicitudId);
+    return;
+  }
   if (creador) {
     const u = await q('SELECT COALESCE(rol,\'admin\') AS rol, COALESCE(tope_mes,0) AS tope FROM buro_usuarios WHERE usuario=$1', [creador]);
     if (u.rows.length && u.rows[0].rol === 'gerente') {
@@ -1289,6 +1302,9 @@ app.post('/api/solicitudes/:id/consultar', auth, alcance, async (req, res) => {
         error: 'Faltan datos que Buró exige: ' + faltan.join(', ') + '.',
         faltan: faltan, sin_consumo: true
       });
+    }
+    if (docsListo() && !(await tieneINE(req.params.id))) {
+      return res.status(400).json({ error: 'Antes de consultar, sube la foto de la INE del cliente.', sin_consumo: true });
     }
     const c = await cuotaMes();
     if (esGerente(req)) {
@@ -1659,7 +1675,7 @@ app.get('/api/health', async (req, res) => {
     await q('SELECT 1');
     const c = await cuotaMes();
     res.json({
-      salud: true, version: '1.1', mock: MOFFIN_MOCK, entorno: MOFFIN_ENV,
+      salud: true, version: '1.2', mock: MOFFIN_MOCK, entorno: MOFFIN_ENV, docs: docsListo(),
       cuota: c, hoy: hoyMX()
     });
   } catch (e) {
