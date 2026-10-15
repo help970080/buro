@@ -818,7 +818,8 @@
           h += '<div class="msg err" style="display:block">' + esc(c.error) + '</div>';
         } else {
           if (gerente()){
-            /* Gerente: solo el reporte, sin datos técnicos */
+            /* Gerente: tacómetro y el reporte, sin datos técnicos */
+            if (c.interpretacion) h += tacometro(c.interpretacion);
             h += '<button id="d_reppdf" style="width:100%;margin-top:6px;padding:15px">Descargar reporte de crédito (PDF)</button>';
           } else {
           if (c.interpretacion) h += tacometro(c.interpretacion);
