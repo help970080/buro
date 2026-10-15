@@ -67,6 +67,19 @@
   .aviso-sim{background:#FDF3E2;border:1px solid #EDD9AE;color:#7A5310;
     padding:9px 14px;border-radius:8px;font-size:13px;margin-bottom:14px}
   .vacio{text-align:center;padding:44px 20px;color:var(--gris)}
+  .tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+  .tabs button{background:#fff;color:var(--tinta);border:1.5px solid var(--linea);padding:8px 16px;font-size:14px}
+  .tabs button.activo{background:var(--tinta);color:#fff;border-color:var(--tinta)}
+  .contadores{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:14px}
+  .contador{border:1px solid var(--linea);border-radius:9px;padding:9px 11px;background:#FBFAF7;cursor:pointer}
+  .contador b{display:block;font-size:22px;line-height:1.1}
+  .contador span{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--gris)}
+  .contador.sel{border-color:var(--tinta);background:#fff;box-shadow:0 0 0 1px var(--tinta)}
+  .filtros{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  .filtros select,.filtros input{width:auto;padding:7px 9px;font-size:13.5px}
+  .rol-tag{font-size:11px;letter-spacing:.08em;text-transform:uppercase;background:rgba(255,255,255,.18);padding:3px 9px;border-radius:12px}
+  table.usuarios input,table.usuarios select{padding:6px 7px;font-size:13px}
+  .scroll-x{overflow-x:auto}
   @media(max-width:760px){ .rejilla{grid-template-columns:1fr} .ocultar-cel{display:none} }
 </style>
 </head>
@@ -88,6 +101,7 @@
 
 <header class="oculto" id="cab">
   <div class="marca">BURÓ · LMV CREDIA</div>
+  <span class="rol-tag" id="rolTag"></span>
   <div class="cuota" id="cuota">—</div>
   <button id="salir">Salir</button>
 </header>
@@ -97,6 +111,13 @@
     Modo simulado: las consultas no son reales y no se cobran. Se apaga con MOFFIN_MOCK=0 en Render.
   </div>
 
+  <nav class="tabs oculto" id="tabs">
+    <button class="activo" data-tab="vSol">Solicitudes</button>
+    <button data-tab="vUsu">Usuarios</button>
+    <button data-tab="vBit">Bitácora de consultas</button>
+  </nav>
+
+  <div id="vSol">
   <!-- NUEVA SOLICITUD -->
   <section class="tarjeta">
     <h2>Nueva solicitud</h2>
@@ -150,12 +171,65 @@
         <option value="error">Con error</option>
       </select>
       <button class="claro chico" id="brefresca">Actualizar</button>
-      <button class="claro chico" id="bexporta">Exportar lista (CSV)</button>
-      <button class="claro chico" id="bexportapdf">Exportar comprobantes (PDF)</button>
+      <button class="claro chico solo-admin" id="bexporta">Exportar lista (CSV)</button>
+      <button class="claro chico solo-admin" id="bexportapdf">Exportar comprobantes (PDF)</button>
       <button class="claro chico" id="bhojas">Imprimir hojas en blanco</button>
     </div>
+    <div class="filtros">
+      <select id="f_agencia" class="solo-admin"><option value="">Todas las agencias</option></select>
+      <select id="f_sem">
+        <option value="">Cualquier dictamen</option>
+        <option value="verde">Verde</option><option value="ambar">Ámbar</option>
+        <option value="rojo">Rojo</option><option value="sin">Sin dictamen</option>
+      </select>
+      <label style="margin:0;align-self:center">Desde</label><input id="f_desde" type="date">
+      <label style="margin:0;align-self:center">Hasta</label><input id="f_hasta" type="date">
+      <button class="claro chico" id="f_limpia">Limpiar filtros</button>
+    </div>
+    <div class="contadores" id="contadores"></div>
     <div id="tabla"></div>
   </section>
+  </div>
+
+  <!-- USUARIOS (admin) -->
+  <div id="vUsu" class="oculto">
+    <section class="tarjeta">
+      <h2>Nuevo usuario</h2>
+      <div class="rejilla">
+        <div><label for="u_usuario">Usuario</label><input id="u_usuario" type="text" autocomplete="off"></div>
+        <div><label for="u_nombre">Nombre</label><input id="u_nombre" type="text"></div>
+        <div><label for="u_pass">Contraseña (mín. 6)</label><input id="u_pass" type="password" autocomplete="new-password"></div>
+      </div>
+      <div class="rejilla">
+        <div><label for="u_rol">Rol</label>
+          <select id="u_rol"><option value="gerente">Gerente (solo su agencia)</option><option value="admin">Administrador</option></select></div>
+        <div><label for="u_agencia">Agencia</label><input id="u_agencia" type="text" list="dl_agencias" placeholder="Igual que en las solicitudes"></div>
+        <div><label for="u_tope">Tope de consultas al mes</label><input id="u_tope" type="number" min="0" value="20"></div>
+      </div>
+      <datalist id="dl_agencias"></datalist>
+      <div id="musu" class="msg"></div>
+      <button id="bnuevousu" style="margin-top:14px">Crear usuario</button>
+    </section>
+    <section class="tarjeta">
+      <h2>Usuarios</h2>
+      <div style="font-size:12.5px;color:#6B7A88;margin-bottom:10px">El gerente solo ve y crea solicitudes de su agencia, consulta score hasta su tope y ve el dictamen. No ve el reporte ni exporta.</div>
+      <div id="musu2" class="msg"></div>
+      <div id="tablaUsu" class="scroll-x"></div>
+    </section>
+  </div>
+
+  <!-- BITÁCORA (admin) -->
+  <div id="vBit" class="oculto">
+    <section class="tarjeta">
+      <div class="barra">
+        <h2 style="margin:0;flex:1">Bitácora de consultas</h2>
+        <input id="b_mes" type="month" style="width:auto">
+      </div>
+      <div id="bitUsu" class="scroll-x"></div>
+      <h2 style="margin-top:18px">Últimas consultas del mes</h2>
+      <div id="bitLista" class="scroll-x"></div>
+    </section>
+  </div>
 </main>
 
 <!-- DETALLE -->
@@ -174,6 +248,8 @@
   'use strict';
   var tok = localStorage.getItem('buro_token') || '';
   var actual = null;
+  var ROL = 'admin', MI_AGENCIA = '';
+  function gerente(){ return ROL === 'gerente'; }
 
   function $(id){ return document.getElementById(id); }
   function msg(caja, txt, clase){
@@ -243,20 +319,53 @@
     $('login').classList.add('oculto');
     $('cab').classList.remove('oculto');
     $('app').classList.remove('oculto');
-    cuota();
-    lista();
+    cuota().then(function(){ aplicaRol(); lista(); });
     fetch('/api/health').then(function(r){ return r.json(); }).then(function(h){
       if (h.mock) $('avisoSim').classList.remove('oculto');
     }).catch(function(){});
   }
 
   function cuota(){
-    api('/api/cuota').then(function(c){
-      var t = '<b>' + c.usadas + '</b> / ' + c.incluidas + ' consultas · ' + c.mes;
-      if (c.excedidas > 0) t += ' · <b style="color:#FFD9A0">' + c.excedidas + ' extra</b>';
+    return api('/api/cuota').then(function(c){
+      ROL = c.rol || 'admin'; MI_AGENCIA = c.agencia || '';
+      var t;
+      if (gerente() && c.mia){
+        t = 'Mis consultas: <b>' + c.mia.usadas + '</b> / ' + c.mia.tope + ' · ' + esc(MI_AGENCIA);
+      } else {
+        t = '<b>' + c.usadas + '</b> / ' + c.incluidas + ' consultas · ' + c.mes;
+        if (c.excedidas > 0) t += ' · <b style="color:#FFD9A0">' + c.excedidas + ' extra</b>';
+      }
       $('cuota').innerHTML = t;
-    }).catch(function(){});
+      $('rolTag').textContent = gerente() ? 'Gerente' : 'Administrador';
+    }).catch(function(e){ $('cuota').textContent = e.message; });
   }
+
+  function aplicaRol(){
+    Array.prototype.forEach.call(document.querySelectorAll('.solo-admin'), function(el){
+      el.classList.toggle('oculto', gerente());
+    });
+    $('tabs').classList.toggle('oculto', gerente());
+    if (gerente()){
+      $('n_agencia').value = MI_AGENCIA;
+      $('n_agencia').readOnly = true;
+      muestraTab('vSol');
+    } else {
+      $('n_agencia').readOnly = false;
+    }
+  }
+
+  /* ---- Pestañas (admin) ---- */
+  function muestraTab(id){
+    ['vSol','vUsu','vBit'].forEach(function(v){ $(v).classList.toggle('oculto', v !== id); });
+    Array.prototype.forEach.call($('tabs').querySelectorAll('button'), function(b){
+      b.classList.toggle('activo', b.getAttribute('data-tab') === id);
+    });
+    if (id === 'vUsu') usuarios();
+    if (id === 'vBit') bitacora();
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('#tabs button'), function(b){
+    b.addEventListener('click', function(){ muestraTab(b.getAttribute('data-tab')); });
+  });
 
   /* ---- Lectura de INE ---- */
   $('n_ine').addEventListener('change', function(){
@@ -327,6 +436,7 @@
     .then(function(s){
       $('bnueva').disabled = false;
       ['n_tel','n_agencia','n_nombre','n_ap','n_am','n_curp','n_nac','n_cp','n_ine','n_rfc'].forEach(function(x){ $(x).value=''; });
+      if (gerente()) $('n_agencia').value = MI_AGENCIA;
       $('n_rfc').dataset.tocado = ''; $('n_rfc_nota').textContent = '';
       msg('mnueva','');
       muestraFolio(s);
@@ -499,15 +609,58 @@
   }
 
   /* ---- Lista ---- */
+  function filtrosQS(){
+    return '&agencia=' + encodeURIComponent(gerente() ? '' : $('f_agencia').value) +
+      '&desde=' + encodeURIComponent($('f_desde').value) +
+      '&hasta=' + encodeURIComponent($('f_hasta').value);
+  }
   function lista(){
     var qs = '?estado=' + encodeURIComponent($('filtro').value) +
-             '&q=' + encodeURIComponent($('buscar').value);
+             '&q=' + encodeURIComponent($('buscar').value) +
+             '&semaforo=' + encodeURIComponent($('f_sem').value) + filtrosQS();
     api('/api/solicitudes' + qs).then(pinta).catch(function(e){
       $('tabla').innerHTML = '<div class="vacio">' + esc(e.message) + '</div>';
     });
+    tablero();
+  }
+  var ETQ = [['', 'Total'], ['nueva','Nuevas'], ['abierta','Abiertas'], ['autorizada','Por consultar'],
+             ['consultada','Consultadas'], ['entregada','Entregadas'], ['error','Con error']];
+  function tablero(){
+    api('/api/tablero?x=1' + filtrosQS()).then(function(t){
+      var sel = $('filtro').value;
+      var h = ETQ.map(function(e){
+        var n = e[0] ? (t.estado[e[0]] || 0) : t.total;
+        return '<div class="contador' + (sel === e[0] ? ' sel' : '') + '" data-est="' + e[0] + '"><b>' + n + '</b><span>' + e[1] + '</span></div>';
+      }).join('');
+      h += ['verde','ambar','rojo'].map(function(c){
+        return '<div class="contador' + ($('f_sem').value === c ? ' sel' : '') + '" data-sem="' + c + '"><b><span class="sem ' + c + '"></span>' +
+          (t.semaforo[c] || 0) + '</b><span>Dictamen ' + (c === 'ambar' ? 'ámbar' : c) + '</span></div>';
+      }).join('');
+      $('contadores').innerHTML = h;
+      Array.prototype.forEach.call($('contadores').querySelectorAll('[data-est]'), function(el){
+        el.addEventListener('click', function(){ $('filtro').value = el.getAttribute('data-est'); lista(); });
+      });
+      Array.prototype.forEach.call($('contadores').querySelectorAll('[data-sem]'), function(el){
+        el.addEventListener('click', function(){
+          var v = el.getAttribute('data-sem');
+          $('f_sem').value = $('f_sem').value === v ? '' : v; lista();
+        });
+      });
+      if (!gerente() && t.agencias){
+        var cur = $('f_agencia').value;
+        $('f_agencia').innerHTML = '<option value="">Todas las agencias</option>' +
+          t.agencias.map(function(a){ return '<option' + (a === cur ? ' selected' : '') + '>' + esc(a) + '</option>'; }).join('');
+        $('dl_agencias').innerHTML = t.agencias.map(function(a){ return '<option value="' + esc(a) + '">'; }).join('');
+      }
+    }).catch(function(){});
   }
   $('brefresca').addEventListener('click', lista);
   $('filtro').addEventListener('change', lista);
+  ['f_agencia','f_sem','f_desde','f_hasta'].forEach(function(id){ $(id).addEventListener('change', lista); });
+  $('f_limpia').addEventListener('click', function(){
+    ['f_agencia','f_sem','f_desde','f_hasta','filtro','buscar'].forEach(function(id){ $(id).value = ''; });
+    lista();
+  });
   var tBusca;
   $('buscar').addEventListener('input', function(){
     clearTimeout(tBusca); tBusca = setTimeout(lista, 300);
@@ -515,7 +668,7 @@
 
   function pinta(filas){
     if(!filas.length){
-      $('tabla').innerHTML = '<div class="vacio">Todavía no hay solicitudes. Crea la primera arriba.</div>';
+      $('tabla').innerHTML = '<div class="vacio">No hay solicitudes con estos filtros.</div>';
       return;
     }
     var h = '<table><thead><tr><th>Folio</th><th>Cliente</th>' +
@@ -609,11 +762,17 @@
               esc(c.folio_moffin || '—') + '</span></div>' +
             '<div class="dato"><span>Tipo</span><span>' + esc(c.tipo) + '</span></div>' +
             '<div class="dato"><span>Score</span><span style="font-size:20px">' + (c.score || '—') + '</span></div>' +
-            '<div class="dato"><span>Fecha</span><span>' + fecha(c.consultada) + '</span></div>';
+            '<div class="dato"><span>Fecha</span><span>' + fecha(c.consultada) + '</span></div>' +
+            (c.usuario ? '<div class="dato"><span>Consultó</span><span>' + esc(c.usuario) + '</span></div>' : '');
           if (c.simulada) h += '<div class="aviso-sim">Consulta simulada o reutilizada. No se cobró.</div>';
+          if (gerente()){
+            if (c.resumen && c.resumen.score_texto && !c.score) h += '<div class="dato"><span>Nota del score</span><span>' + esc(c.resumen.score_texto) + '</span></div>';
+            if (!d.dictamen) h += '<div class="aviso-sim" style="margin-top:10px">El administrador revisará el resultado y emitirá el dictamen.</div>';
+          } else {
           h += '<button class="claro" id="d_reppdf" style="width:100%;margin-top:10px">Descargar reporte de crédito (PDF)</button>' +
             '<div style="font-size:12px;color:#6B7A88;margin-top:6px">Uso interno. El enlace de la agencia solo muestra el dictamen.</div>';
-          if (c.resumen){
+          }
+          if (c.resumen && !gerente()){
             var r = c.resumen;
             if (r.score_texto && !c.score) h += '<div class="dato"><span>Nota del score</span><span>' + esc(r.score_texto) + '</span></div>';
             h += '<div class="dato"><span>Cuentas</span><span>' + (r.cuentas || 0) + '</span></div>' +
@@ -696,13 +855,28 @@
 
       h += '<div id="d_revision"></div>';
 
-      if (s.estado === 'autorizada' || s.estado === 'error' || (c && c.tipo === 'score')){
+      if (gerente()){
+        if (s.estado === 'autorizada' || s.estado === 'error'){
+          h += '<div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">' +
+            '<button id="d_score">Consultar score</button></div>';
+        }
+      } else if (s.estado === 'autorizada' || s.estado === 'error' || (c && c.tipo === 'score')){
         h += '<div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">' +
           '<button id="d_score">Consultar score</button>' +
           '<button class="claro" id="d_reporte">Reporte completo (cuesta más)</button></div>';
       }
 
-      if (c && !c.error){
+      if (d.dictamen){
+        var dd = d.dictamen;
+        h += '<h2 style="margin-top:22px">Dictamen</h2>' +
+          '<div class="dato"><span>Semáforo</span><span><span class="sem ' + esc(dd.semaforo) + '"></span>' +
+            esc(String(dd.semaforo || '').toUpperCase()) + '</span></div>' +
+          '<div class="dato"><span>Monto sugerido</span><span>' + pesos(dd.monto_sugerido) + '</span></div>' +
+          (dd.notas ? '<div class="dato"><span>Notas</span><span style="white-space:pre-wrap;font-weight:400">' + esc(dd.notas) + '</span></div>' : '') +
+          '<div class="dato"><span>Emitido</span><span>' + fecha(dd.creado) + ' · ' + esc(dd.autor || '') + '</span></div>';
+      }
+
+      if (c && !c.error && !gerente()){
         h += '<h2 style="margin-top:22px">Dictamen para la agencia</h2>' +
           '<label for="d_sem">Semáforo</label>' +
           '<select id="d_sem">' +
@@ -716,7 +890,7 @@
           '<button id="d_guardar" style="width:100%;margin-top:14px">Guardar y generar enlace</button>';
       }
 
-      if (d.dictamen && d.dictamen.token_agencia){
+      if (d.dictamen && d.dictamen.token_agencia && !gerente()){
         var url = location.origin + '/r/' + d.dictamen.token_agencia;
         h += '<h2 style="margin-top:20px">Enlace para la agencia</h2>' +
           '<div style="font-size:12px;color:#6B7A88;margin-bottom:8px">Muestra semáforo, monto y notas. No incluye el reporte.</div>' +
@@ -804,7 +978,7 @@
     api('/api/solicitudes/' + actual + '/consultar', {method:'POST', body:{tipo:tipo, confirmado:confirmado}})
     .then(function(){ cuota(); abre(actual); lista(); })
     .catch(function(e){
-      if (/cuesta más|consultas del mes/i.test(e.message)){
+      if (!gerente() && /cuesta más|consultas del mes/i.test(e.message)){
         if (confirm(e.message + '\n\n¿Continuar de todos modos?')) { consulta(tipo, true); return; }
         msg('d_msg','');
         return;
@@ -858,6 +1032,96 @@
     if (!n) return;
     bajaArchivo('/api/hojas.pdf?n=' + encodeURIComponent(n), 'hojas-autorizacion.pdf');
   });
+
+  /* ---- Usuarios (admin) ---- */
+  $('u_rol').addEventListener('change', function(){
+    $('u_tope').disabled = this.value !== 'gerente';
+  });
+  $('bnuevousu').addEventListener('click', function(){
+    msg('musu','');
+    var b = this; b.disabled = true;
+    api('/api/usuarios', {method:'POST', body:{
+      usuario: $('u_usuario').value, nombre: $('u_nombre').value, pass: $('u_pass').value,
+      rol: $('u_rol').value, agencia: $('u_agencia').value, tope_mes: $('u_tope').value
+    }}).then(function(){
+      msg('musu','Usuario creado. Ya puede entrar a buro.legaxia.uk/panel','ok');
+      ['u_usuario','u_nombre','u_pass','u_agencia'].forEach(function(x){ $(x).value=''; });
+      usuarios();
+    }).catch(function(e){ msg('musu', e.message, 'err'); })
+    .then(function(){ b.disabled = false; });
+  });
+
+  function usuarios(){
+    api('/api/usuarios').then(function(rows){
+      var h = '<table class="usuarios"><thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Agencia</th>' +
+        '<th>Tope/mes</th><th>Usadas</th><th>Activo</th><th class="ocultar-cel">Último acceso</th><th></th></tr></thead><tbody>';
+      rows.forEach(function(u){
+        var k = esc(u.usuario);
+        h += '<tr data-u="' + k + '">' +
+          '<td><b>' + k + '</b></td>' +
+          '<td><input data-c="nombre" value="' + esc(u.nombre || '') + '" style="min-width:120px"></td>' +
+          '<td><select data-c="rol"><option value="gerente"' + (u.rol === 'gerente' ? ' selected' : '') + '>Gerente</option>' +
+            '<option value="admin"' + (u.rol !== 'gerente' ? ' selected' : '') + '>Admin</option></select></td>' +
+          '<td><input data-c="agencia" list="dl_agencias" value="' + esc(u.agencia || '') + '" style="min-width:120px"></td>' +
+          '<td><input data-c="tope_mes" type="number" min="0" value="' + (u.tope_mes || 0) + '" style="width:70px"></td>' +
+          '<td>' + (u.usadas_mes || 0) + '</td>' +
+          '<td><input data-c="activo" type="checkbox"' + (u.activo ? ' checked' : '') + ' style="width:auto"></td>' +
+          '<td class="ocultar-cel" style="font-size:12.5px;color:#6B7A88">' + fecha(u.ultimo_acceso) + '</td>' +
+          '<td style="white-space:nowrap"><button class="chico" data-guarda="1">Guardar</button> ' +
+            '<button class="claro chico" data-pass="1">Contraseña</button></td></tr>';
+      });
+      h += '</tbody></table>';
+      $('tablaUsu').innerHTML = h;
+      Array.prototype.forEach.call($('tablaUsu').querySelectorAll('tr[data-u]'), function(tr){
+        var u = tr.getAttribute('data-u');
+        function val(c){ var el = tr.querySelector('[data-c="' + c + '"]'); return el.type === 'checkbox' ? el.checked : el.value; }
+        tr.querySelector('[data-guarda]').addEventListener('click', function(){
+          msg('musu2','');
+          api('/api/usuarios/' + encodeURIComponent(u), {method:'PUT', body:{
+            nombre: val('nombre'), rol: val('rol'), agencia: val('agencia'), tope_mes: val('tope_mes'), activo: val('activo')
+          }}).then(function(){ msg('musu2','Cambios guardados para ' + u + '.','ok'); usuarios(); })
+            .catch(function(e){ msg('musu2', e.message, 'err'); });
+        });
+        tr.querySelector('[data-pass]').addEventListener('click', function(){
+          var p = prompt('Nueva contraseña para ' + u + ' (mínimo 6):');
+          if (!p) return;
+          api('/api/usuarios/' + encodeURIComponent(u), {method:'PUT', body:{pass: p}})
+            .then(function(){ msg('musu2','Contraseña actualizada para ' + u + '.','ok'); })
+            .catch(function(e){ msg('musu2', e.message, 'err'); });
+        });
+      });
+    }).catch(function(e){ $('tablaUsu').innerHTML = '<div class="vacio">' + esc(e.message) + '</div>'; });
+  }
+
+  /* ---- Bitácora (admin) ---- */
+  $('b_mes').addEventListener('change', bitacora);
+  function bitacora(){
+    var mes = $('b_mes').value;
+    api('/api/bitacora' + (mes ? '?mes=' + mes : '')).then(function(b){
+      if (!$('b_mes').value) $('b_mes').value = b.mes;
+      var h = '<table><thead><tr><th>Usuario</th><th>Reales (cobradas)</th><th>Sin costo</th><th>Con error</th></tr></thead><tbody>';
+      if (!b.por_usuario.length) h += '<tr><td colspan="4" class="vacio">Sin consultas este mes.</td></tr>';
+      b.por_usuario.forEach(function(r){
+        h += '<tr><td><b>' + esc(r.usuario) + '</b></td><td><b>' + r.reales + '</b></td><td>' + r.sin_costo + '</td><td>' + r.errores + '</td></tr>';
+      });
+      $('bitUsu').innerHTML = h + '</tbody></table>';
+      var l = '<table><thead><tr><th>Fecha</th><th>Usuario</th><th>Folio</th><th>Cliente</th><th class="ocultar-cel">Agencia</th>' +
+        '<th>Tipo</th><th>Score</th><th>Resultado</th></tr></thead><tbody>';
+      b.ultimas.forEach(function(r){
+        var res = r.error ? '<span class="pill error">error</span>'
+          : (r.simulada ? '<span class="pill nueva">sin costo</span>' : '<span class="pill consultada">cobrada</span>');
+        l += '<tr class="clic" data-id="' + (r.solicitud_id || '') + '"><td style="font-size:13px">' + fecha(r.consultada) + '</td>' +
+          '<td>' + esc(r.usuario || '—') + '</td><td>' + esc(r.folio || '—') + '</td><td>' + esc(r.cliente || '—') + '</td>' +
+          '<td class="ocultar-cel">' + esc(r.agencia || '—') + '</td><td>' + esc(r.tipo) + '</td>' +
+          '<td>' + (r.score || '—') + '</td><td>' + res + '</td></tr>';
+      });
+      $('bitLista').innerHTML = l + '</tbody></table>';
+      Array.prototype.forEach.call($('bitLista').querySelectorAll('tr.clic'), function(tr){
+        var id = tr.getAttribute('data-id');
+        if (id) tr.addEventListener('click', function(){ abre(id); });
+      });
+    }).catch(function(e){ $('bitUsu').innerHTML = '<div class="vacio">' + esc(e.message) + '</div>'; });
+  }
 
   if (tok) arranca();
 })();

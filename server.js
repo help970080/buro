@@ -324,6 +324,14 @@ async function initDB() {
     visto TIMESTAMPTZ DEFAULT NOW()
   )`);
 
+  /* Roles: admin (todo) y gerente (solo su agencia, score con tope). Los usuarios previos quedan admin. */
+  for (const col of ["rol TEXT DEFAULT 'admin'", 'agencia TEXT', 'tope_mes INT DEFAULT 0', 'ultimo_acceso TIMESTAMPTZ']) {
+    await q('ALTER TABLE buro_usuarios ADD COLUMN IF NOT EXISTS ' + col);
+  }
+  await q('ALTER TABLE buro_consultas ADD COLUMN IF NOT EXISTS usuario TEXT');
+  await q(`CREATE INDEX IF NOT EXISTS ix_cons_usuario ON buro_consultas(usuario, mes)`);
+  await q(`CREATE INDEX IF NOT EXISTS ix_sol_agencia ON buro_solicitudes((UPPER(TRIM(agencia))))`);
+
   await q(`CREATE INDEX IF NOT EXISTS ix_doc_sol ON buro_documentos(solicitud_id)`);
   await q(`CREATE INDEX IF NOT EXISTS ix_doc_purgar ON buro_documentos(purgar) WHERE purgado IS NULL`);
   await q(`CREATE INDEX IF NOT EXISTS ix_sol_estado ON buro_solicitudes(estado)`);
@@ -341,12 +349,63 @@ async function initDB() {
 }
 
 /* ---------- Auth del equipo ---------- */
-function auth(req, res, next) {
+async function auth(req, res, next) {
   const h = req.headers.authorization || (req.query.t ? 'Bearer ' + req.query.t : '');
   const d = leeJWT(h.replace(/^Bearer\s+/i, ''));
   if (!d || d.t !== 'equipo') return res.status(401).json({ error: 'Sesión expirada. Vuelve a entrar.' });
-  req.user = d;
+  try {
+    /* Se relee el usuario en cada petición: bajas y cambios de rol aplican al instante */
+    const r = await q('SELECT usuario, nombre, rol, agencia, tope_mes, activo FROM buro_usuarios WHERE usuario=$1', [d.u]);
+    if (!r.rows.length || !r.rows[0].activo) return res.status(401).json({ error: 'Tu acceso fue desactivado.' });
+    const u = r.rows[0];
+    req.user = { u: u.usuario, n: u.nombre, rol: u.rol || 'admin', agencia: (u.agencia || '').trim(), tope: u.tope_mes || 0 };
+    if (req.user.rol === 'gerente' && !req.user.agencia) {
+      return res.status(403).json({ error: 'Tu usuario no tiene agencia asignada. Pide al administrador que la configure.' });
+    }
+    next();
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+}
+function esGerente(req) { return req.user && req.user.rol === 'gerente'; }
+function normAg(s) { return String(s || '').trim().toUpperCase(); }
+function soloAdmin(req, res, next) {
+  if (esGerente(req)) return res.status(403).json({ error: 'Tu perfil de gerente no tiene acceso a esta función.' });
   next();
+}
+/* Gerente: la solicitud debe ser de su agencia */
+async function deSuAgencia(req, solicitudId) {
+  if (!esGerente(req)) return true;
+  const r = await q('SELECT agencia FROM buro_solicitudes WHERE id=$1', [solicitudId]);
+  return !!(r.rows.length && normAg(r.rows[0].agencia) === normAg(req.user.agencia));
+}
+async function alcance(req, res, next) {
+  try {
+    if (!(await deSuAgencia(req, req.params.id))) {
+      return res.status(403).json({ error: 'Esa solicitud no es de tu agencia.' });
+    }
+    next();
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+}
+async function alcanceDoc(req, res, next) {
+  try {
+    if (!esGerente(req)) return next();
+    const r = await q('SELECT solicitud_id FROM buro_documentos WHERE id=$1', [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Documento no disponible.' });
+    if (!(await deSuAgencia(req, r.rows[0].solicitud_id))) {
+      return res.status(403).json({ error: 'Ese documento no es de tu agencia.' });
+    }
+    next();
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+}
+async function usadasUsuario(usuario) {
+  const r = await q(`SELECT COUNT(*)::int AS n FROM buro_consultas
+    WHERE usuario=$1 AND mes=$2 AND error IS NULL AND simulada=FALSE`, [usuario, mesMX()]);
+  return r.rows[0].n;
 }
 
 app.post('/api/login', async (req, res) => {
@@ -358,31 +417,138 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ error: 'Usuario o contraseña incorrectos.' });
     }
     const u = r.rows[0];
-    res.json({ token: firmaJWT({ t: 'equipo', u: u.usuario, n: u.nombre }, 12), nombre: u.nombre, usuario: u.usuario });
+    q('UPDATE buro_usuarios SET ultimo_acceso=NOW() WHERE id=$1', [u.id]).catch(() => {});
+    res.json({ token: firmaJWT({ t: 'equipo', u: u.usuario, n: u.nombre }, 12), nombre: u.nombre, usuario: u.usuario,
+      rol: u.rol || 'admin', agencia: u.agencia || '' });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-app.post('/api/usuarios', auth, async (req, res) => {
+function datosRol(b) {
+  const rol = b.rol === 'gerente' ? 'gerente' : 'admin';
+  const agencia = String(b.agencia || '').trim().slice(0, 120);
+  const tope = Math.max(0, Math.min(1000, parseInt(b.tope_mes, 10) || 0));
+  if (rol === 'gerente' && !agencia) throw Object.assign(new Error('El gerente necesita una agencia.'), { http: 400 });
+  return { rol, agencia: rol === 'gerente' ? agencia : (agencia || null), tope };
+}
+
+app.post('/api/usuarios', auth, soloAdmin, async (req, res) => {
   try {
     const usuario = (req.body.usuario || '').toLowerCase().trim();
     const pass = req.body.pass || '';
     if (usuario.length < 3 || pass.length < 6) {
       return res.status(400).json({ error: 'Usuario mínimo 3 caracteres, contraseña mínimo 6.' });
     }
-    await q('INSERT INTO buro_usuarios(usuario, pass, nombre) VALUES ($1,$2,$3)',
-      [usuario, hashPass(pass), req.body.nombre || usuario]);
+    const d = datosRol(req.body);
+    await q('INSERT INTO buro_usuarios(usuario, pass, nombre, rol, agencia, tope_mes) VALUES ($1,$2,$3,$4,$5,$6)',
+      [usuario, hashPass(pass), req.body.nombre || usuario, d.rol, d.agencia, d.tope]);
     res.json({ ok: true });
   } catch (e) {
     if (/duplicate/i.test(e.message)) return res.status(400).json({ error: 'Ese usuario ya existe.' });
+    res.status(e.http || 500).json({ error: e.message });
+  }
+});
+
+app.get('/api/usuarios', auth, soloAdmin, async (req, res) => {
+  try {
+    const r = await q(
+      `SELECT u.usuario, u.nombre, u.activo, u.creado, COALESCE(u.rol,'admin') AS rol, u.agencia,
+              COALESCE(u.tope_mes,0) AS tope_mes, u.ultimo_acceso,
+              (SELECT COUNT(*)::int FROM buro_consultas c WHERE c.usuario=u.usuario AND c.mes=$1
+                 AND c.error IS NULL AND c.simulada=FALSE) AS usadas_mes
+       FROM buro_usuarios u ORDER BY u.creado`, [mesMX()]);
+    res.json(r.rows);
+  } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-app.get('/api/usuarios', auth, async (req, res) => {
-  const r = await q('SELECT usuario, nombre, activo, creado FROM buro_usuarios ORDER BY creado');
-  res.json(r.rows);
+/* Editar rol, agencia, tope, nombre, activo o contraseña */
+app.put('/api/usuarios/:usuario', auth, soloAdmin, async (req, res) => {
+  try {
+    const usuario = String(req.params.usuario || '').toLowerCase().trim();
+    const ex = await q('SELECT * FROM buro_usuarios WHERE usuario=$1', [usuario]);
+    if (!ex.rows.length) return res.status(404).json({ error: 'No existe ese usuario.' });
+    const b = req.body || {};
+    const actual = ex.rows[0];
+    const d = datosRol({
+      rol: b.rol !== undefined ? b.rol : actual.rol,
+      agencia: b.agencia !== undefined ? b.agencia : actual.agencia,
+      tope_mes: b.tope_mes !== undefined ? b.tope_mes : actual.tope_mes
+    });
+    const activo = b.activo !== undefined ? !!b.activo : actual.activo;
+    if (usuario === req.user.u && (!activo || d.rol !== 'admin')) {
+      return res.status(400).json({ error: 'No puedes quitarte el acceso de administrador a ti mismo.' });
+    }
+    if (d.rol !== 'admin' || !activo) {
+      const adm = await q(`SELECT COUNT(*)::int AS n FROM buro_usuarios
+        WHERE activo=TRUE AND COALESCE(rol,'admin')='admin' AND usuario<>$1`, [usuario]);
+      if (adm.rows[0].n === 0) return res.status(400).json({ error: 'Debe quedar al menos un administrador activo.' });
+    }
+    if (b.pass && String(b.pass).length < 6) return res.status(400).json({ error: 'Contraseña mínimo 6 caracteres.' });
+    await q(`UPDATE buro_usuarios SET nombre=$1, rol=$2, agencia=$3, tope_mes=$4, activo=$5,
+             pass=COALESCE($6, pass) WHERE usuario=$7`,
+      [String(b.nombre !== undefined ? b.nombre : actual.nombre || usuario).slice(0, 120),
+        d.rol, d.agencia, d.tope, activo, b.pass ? hashPass(String(b.pass)) : null, usuario]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(e.http || 500).json({ error: e.message });
+  }
+});
+
+/* Bitácora: quién consultó, cuánto y qué */
+app.get('/api/bitacora', auth, soloAdmin, async (req, res) => {
+  try {
+    const mes = /^\d{4}-\d{2}$/.test(req.query.mes || '') ? req.query.mes : mesMX();
+    const porUsuario = await q(
+      `SELECT COALESCE(usuario,'(sin registro)') AS usuario,
+              COUNT(*) FILTER (WHERE error IS NULL AND simulada=FALSE)::int AS reales,
+              COUNT(*) FILTER (WHERE error IS NULL AND simulada=TRUE)::int AS sin_costo,
+              COUNT(*) FILTER (WHERE error IS NOT NULL)::int AS errores
+       FROM buro_consultas WHERE mes=$1 GROUP BY 1 ORDER BY 2 DESC`, [mes]);
+    const ultimas = await q(
+      `SELECT c.id, c.consultada, c.usuario, c.tipo, c.score, c.simulada, c.error, c.folio_moffin,
+              s.id AS solicitud_id, s.folio, s.agencia,
+              TRIM(CONCAT_WS(' ', s.nombre, s.apellido_p, s.apellido_m)) AS cliente
+       FROM buro_consultas c LEFT JOIN buro_solicitudes s ON s.id=c.solicitud_id
+       WHERE c.mes=$1 ORDER BY c.id DESC LIMIT 150`, [mes]);
+    res.json({ mes, por_usuario: porUsuario.rows, ultimas: ultimas.rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* Tablero: conteos por estado y semáforo, dentro del alcance del usuario */
+app.get('/api/tablero', auth, async (req, res) => {
+  try {
+    const params = [];
+    let w = 'WHERE 1=1';
+    if (esGerente(req)) { params.push(normAg(req.user.agencia)); w += ` AND UPPER(TRIM(s.agencia))=$${params.length}`; }
+    else if (req.query.agencia) { params.push(normAg(req.query.agencia)); w += ` AND UPPER(TRIM(s.agencia))=$${params.length}`; }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(req.query.desde || '')) { params.push(req.query.desde); w += ` AND (s.creada AT TIME ZONE 'America/Mexico_City')::date >= $${params.length}`; }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(req.query.hasta || '')) { params.push(req.query.hasta); w += ` AND (s.creada AT TIME ZONE 'America/Mexico_City')::date <= $${params.length}`; }
+    const r = await q(
+      `SELECT s.estado, d.semaforo, COUNT(*)::int AS n
+       FROM buro_solicitudes s
+       LEFT JOIN LATERAL (SELECT semaforo FROM buro_dictamenes y WHERE y.solicitud_id=s.id ORDER BY y.id DESC LIMIT 1) d ON TRUE
+       ${w} GROUP BY 1, 2`, params);
+    const out = { total: 0, estado: {}, semaforo: {} };
+    r.rows.forEach(function (x) {
+      out.total += x.n;
+      out.estado[x.estado] = (out.estado[x.estado] || 0) + x.n;
+      if (x.semaforo) out.semaforo[x.semaforo] = (out.semaforo[x.semaforo] || 0) + x.n;
+    });
+    let agencias = [];
+    if (!esGerente(req)) {
+      const a = await q(`SELECT DISTINCT TRIM(agencia) AS a FROM buro_solicitudes WHERE COALESCE(TRIM(agencia),'')<>'' ORDER BY 1`);
+      agencias = a.rows.map(function (x) { return x.a; });
+    }
+    out.agencias = agencias;
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 /* ---------- Cuota del mes ---------- */
@@ -396,7 +562,13 @@ async function cuotaMes() {
 }
 
 app.get('/api/cuota', auth, async (req, res) => {
-  try { res.json(await cuotaMes()); }
+  try {
+    const c = await cuotaMes();
+    c.rol = req.user.rol;
+    c.agencia = req.user.agencia;
+    if (esGerente(req)) c.mia = { usadas: await usadasUsuario(req.user.u), tope: req.user.tope };
+    res.json(c);
+  }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -446,7 +618,7 @@ app.post('/api/ine/leer', auth, async (req, res) => {
 });
 
 /* ---------- Documentos de respaldo ---------- */
-app.post('/api/solicitudes/:id/documento', auth, async (req, res) => {
+app.post('/api/solicitudes/:id/documento', auth, alcance, async (req, res) => {
   try {
     if (!docsListo()) {
       return res.status(400).json({
@@ -484,7 +656,7 @@ app.post('/api/solicitudes/:id/documento', auth, async (req, res) => {
   }
 });
 
-app.get('/api/solicitudes/:id/documentos', auth, async (req, res) => {
+app.get('/api/solicitudes/:id/documentos', auth, alcance, async (req, res) => {
   try {
     const r = await q(
       `SELECT id, tipo, bytes, subido_por, revisado, revisado_por, revisado_en, nota, creado, purgar
@@ -502,7 +674,7 @@ app.get('/api/solicitudes/:id/documentos', auth, async (req, res) => {
   }
 });
 
-app.get('/api/documento/:id', auth, async (req, res) => {
+app.get('/api/documento/:id', auth, alcanceDoc, async (req, res) => {
   try {
     if (!docsListo()) return res.status(400).json({ error: 'Resguardo no configurado.' });
     const r = await q(
@@ -518,7 +690,7 @@ app.get('/api/documento/:id', auth, async (req, res) => {
   }
 });
 
-app.post('/api/documento/:id/revisar', auth, async (req, res) => {
+app.post('/api/documento/:id/revisar', auth, alcanceDoc, async (req, res) => {
   try {
     const ok = req.body.correcto !== false;
     const r = await q(
@@ -532,7 +704,7 @@ app.post('/api/documento/:id/revisar', auth, async (req, res) => {
   }
 });
 
-app.delete('/api/documento/:id', auth, async (req, res) => {
+app.delete('/api/documento/:id', auth, alcanceDoc, async (req, res) => {
   try {
     await q(`UPDATE buro_documentos SET imagen='', purgado=NOW() WHERE id=$1`, [req.params.id]);
     res.json({ ok: true });
@@ -585,7 +757,7 @@ app.post('/api/solicitudes', auth, async (req, res) => {
        (folio, codigo, agencia, telefono, nombre, apellido_p, apellido_m, curp, rfc, fecha_nac,
         calle, colonia, municipio, estado_dom, cp, creada_por, exp_acceso)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
-      [folio, codigo, b.agencia || '', tel,
+      [folio, codigo, esGerente(req) ? req.user.agencia : String(b.agencia || '').trim(), tel,
         normNombre(b.nombre), normNombre(b.apellido_p), normNombre(b.apellido_m),
         (b.curp || '').toUpperCase().trim(), rfc, b.fecha_nac || '',
         b.calle || '', b.colonia || '', b.municipio || '', b.estado_dom || '', (b.cp || '').replace(/\D/g, ''),
@@ -604,6 +776,12 @@ app.get('/api/solicitudes', auth, async (req, res) => {
     const params = [];
     let w = 'WHERE 1=1';
     if (est) { params.push(est); w += ` AND s.estado=$${params.length}`; }
+    if (esGerente(req)) { params.push(normAg(req.user.agencia)); w += ` AND UPPER(TRIM(s.agencia))=$${params.length}`; }
+    else if (req.query.agencia) { params.push(normAg(req.query.agencia)); w += ` AND UPPER(TRIM(s.agencia))=$${params.length}`; }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(req.query.desde || '')) { params.push(req.query.desde); w += ` AND (s.creada AT TIME ZONE 'America/Mexico_City')::date >= $${params.length}`; }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(req.query.hasta || '')) { params.push(req.query.hasta); w += ` AND (s.creada AT TIME ZONE 'America/Mexico_City')::date <= $${params.length}`; }
+    if (req.query.semaforo === 'sin') w += ' AND d.semaforo IS NULL';
+    else if (['verde', 'ambar', 'rojo'].indexOf(req.query.semaforo) >= 0) { params.push(req.query.semaforo); w += ` AND d.semaforo=$${params.length}`; }
     if (bus) {
       params.push('%' + bus + '%');
       w += ` AND (UPPER(s.nombre||' '||COALESCE(s.apellido_p,'')||' '||COALESCE(s.apellido_m,'')) LIKE $${params.length}
@@ -619,24 +797,35 @@ app.get('/api/solicitudes', auth, async (req, res) => {
        LEFT JOIN LATERAL (SELECT * FROM buro_consultas x WHERE x.solicitud_id=s.id ORDER BY x.id DESC LIMIT 1) c ON TRUE
        LEFT JOIN LATERAL (SELECT * FROM buro_dictamenes y WHERE y.solicitud_id=s.id ORDER BY y.id DESC LIMIT 1) d ON TRUE
        ${w} ORDER BY s.id DESC LIMIT 200`, params);
+    if (esGerente(req)) r.rows.forEach(function (x) { delete x.resumen; });
     res.json(r.rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-app.get('/api/solicitudes/:id', auth, async (req, res) => {
+app.get('/api/solicitudes/:id', auth, alcance, async (req, res) => {
   try {
     const s = await q('SELECT * FROM buro_solicitudes WHERE id=$1', [req.params.id]);
     if (!s.rows.length) return res.status(404).json({ error: 'No existe esa solicitud.' });
     const a = await q('SELECT id, texto_hash, ip, agente, aceptada, vence, datos, firma FROM buro_autorizaciones WHERE solicitud_id=$1 ORDER BY id DESC', [req.params.id]);
     const c = await q('SELECT * FROM buro_consultas WHERE solicitud_id=$1 ORDER BY id DESC', [req.params.id]);
     const d = await q('SELECT * FROM buro_dictamenes WHERE solicitud_id=$1 ORDER BY id DESC LIMIT 1', [req.params.id]);
+    let consultas = c.rows;
+    if (esGerente(req)) {
+      /* Gerente: score y estado de la consulta; sin reporte ni detalle de cuentas */
+      consultas = consultas.map(function (x) {
+        return { id: x.id, tipo: x.tipo, score: x.score, folio_moffin: x.folio_moffin, error: x.error,
+          simulada: x.simulada, consultada: x.consultada, usuario: x.usuario,
+          resumen: x.resumen && x.resumen.score_texto ? { score_texto: x.resumen.score_texto } : null };
+      });
+    }
     res.json({
       solicitud: s.rows[0],
       autorizaciones: a.rows,
-      consultas: c.rows,
-      dictamen: d.rows[0] || null
+      consultas: consultas,
+      dictamen: d.rows[0] || null,
+      rol: req.user.rol
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -644,7 +833,7 @@ app.get('/api/solicitudes/:id', auth, async (req, res) => {
 });
 
 /* Regenera código y extiende el acceso */
-app.post('/api/solicitudes/:id/renovar', auth, async (req, res) => {
+app.post('/api/solicitudes/:id/renovar', auth, alcance, async (req, res) => {
   try {
     const codigo = digitos(4);
     const exp = new Date(Date.now() + 72 * 3600 * 1000);
@@ -659,7 +848,7 @@ app.post('/api/solicitudes/:id/renovar', auth, async (req, res) => {
 });
 
 /* Llamada del IVR para dictar el código al cliente */
-app.post('/api/solicitudes/:id/llamar', auth, async (req, res) => {
+app.post('/api/solicitudes/:id/llamar', auth, alcance, async (req, res) => {
   try {
     const r = await q('SELECT folio, codigo, telefono, nombre FROM buro_solicitudes WHERE id=$1', [req.params.id]);
     if (!r.rows.length) return res.status(404).json({ error: 'No existe esa solicitud.' });
@@ -722,7 +911,7 @@ app.post('/api/acceso', async (req, res) => {
 /* Modo presencial: el cliente está enfrente y firma en el celular del empleado.
    El empleado abre esto desde su sesión; no hay folio ni código de por medio.
    La sesión dura 20 minutos y sirve una sola vez. */
-app.post('/api/solicitudes/:id/presencial', auth, async (req, res) => {
+app.post('/api/solicitudes/:id/presencial', auth, alcance, async (req, res) => {
   try {
     const r = await q('SELECT * FROM buro_solicitudes WHERE id=$1', [req.params.id]);
     if (!r.rows.length) return res.status(404).json({ error: 'No existe esa solicitud.' });
@@ -817,7 +1006,7 @@ app.post('/api/autorizar', authCliente, async (req, res) => {
     res.json({ ok: true });
 
     /* La consulta corre después de responder: el cliente no espera. */
-    consultarMoffin(req.sol, 'score').catch(e => console.error('consulta bg:', e.message));
+    consultaAutomatica(req.sol, s.rows[0].creada_por || '').catch(e => console.error('consulta bg:', e.message));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -842,7 +1031,7 @@ const RFC_PRUEBA = {
   DESCONOCIDO:   { score: null, nota: 'Persona no encontrada' }
 };
 
-app.get('/api/rfc-prueba', auth, (req, res) => {
+app.get('/api/rfc-prueba', auth, soloAdmin, (req, res) => {
   res.json(Object.keys(RFC_PRUEBA).map(k => ({ rfc: k, nota: RFC_PRUEBA[k].nota })));
 });
 
@@ -943,6 +1132,22 @@ async function llamaMoffin(sol, tipo) {
   };
 }
 
+/* Consulta automática al firmar. Se atribuye a quien creó la solicitud;
+   si es gerente y ya no tiene tope o cuota, se queda en 'autorizada' para el administrador. */
+async function consultaAutomatica(solicitudId, creador) {
+  if (creador) {
+    const u = await q('SELECT COALESCE(rol,\'admin\') AS rol, COALESCE(tope_mes,0) AS tope FROM buro_usuarios WHERE usuario=$1', [creador]);
+    if (u.rows.length && u.rows[0].rol === 'gerente') {
+      const c = await cuotaMes();
+      if (c.restantes <= 0 || (await usadasUsuario(creador)) >= u.rows[0].tope) {
+        console.log('Consulta automática omitida (tope/cuota del gerente):', creador, solicitudId);
+        return;
+      }
+    }
+  }
+  return consultarMoffin(solicitudId, 'score', { usuario: creador || null });
+}
+
 async function consultarMoffin(solicitudId, tipo, opciones) {
   const op = opciones || {};
   const rs = await q('SELECT * FROM buro_solicitudes WHERE id=$1', [solicitudId]);
@@ -964,10 +1169,10 @@ async function consultarMoffin(solicitudId, tipo, opciones) {
       const c = cache.rows[0];
       await q('UPDATE buro_solicitudes SET estado=$1, actualizada=NOW() WHERE id=$2', ['consultada', solicitudId]);
       await q(
-        `INSERT INTO buro_consultas(solicitud_id, tipo, curp, rfc, score, resumen, payload, folio_moffin, simulada, mes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9)`,
+        `INSERT INTO buro_consultas(solicitud_id, tipo, curp, rfc, score, resumen, payload, folio_moffin, simulada, mes, usuario)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9,$10)`,
         [solicitudId, tipo, sol.curp, sol.rfc, c.score, c.resumen, c.payload,
-          'CACHE-' + c.id, mesMX()]);
+          'CACHE-' + c.id, mesMX(), op.usuario || null]);
       return { reutilizada: true, score: c.score, resumen: c.resumen };
     }
   }
@@ -980,19 +1185,19 @@ async function consultarMoffin(solicitudId, tipo, opciones) {
     delete resumen.error_lectura;
     try { resumen.evaluacion = evalua(out.payload, lectura); } catch (e) { /* opcional */ }
     await q(
-      `INSERT INTO buro_consultas(solicitud_id, tipo, curp, rfc, score, resumen, payload, folio_moffin, simulada, mes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      `INSERT INTO buro_consultas(solicitud_id, tipo, curp, rfc, score, resumen, payload, folio_moffin, simulada, mes, usuario)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [solicitudId, tipo, sol.curp, sol.rfc, score,
         resumen ? JSON.stringify(resumen) : null, JSON.stringify(out.payload),
-        out.folio_moffin, out.simulada, mesMX()]);
+        out.folio_moffin, out.simulada, mesMX(), op.usuario || null]);
     await q('UPDATE buro_solicitudes SET estado=$1, actualizada=NOW() WHERE id=$2', ['consultada', solicitudId]);
     await q(`UPDATE buro_autorizaciones SET folio_bc=COALESCE(folio_bc,$1), fecha_consulta_bc=COALESCE(fecha_consulta_bc,$2)
              WHERE solicitud_id=$3`, [out.folio_moffin || null, hoyMX(), solicitudId]);
     return { score, resumen, simulada: out.simulada };
   } catch (e) {
     await q(
-      `INSERT INTO buro_consultas(solicitud_id, tipo, curp, rfc, error, mes) VALUES ($1,$2,$3,$4,$5,$6)`,
-      [solicitudId, tipo, sol.curp, sol.rfc, e.message.slice(0, 500), mesMX()]);
+      `INSERT INTO buro_consultas(solicitud_id, tipo, curp, rfc, error, mes, usuario) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [solicitudId, tipo, sol.curp, sol.rfc, e.message.slice(0, 500), mesMX(), op.usuario || null]);
     await q('UPDATE buro_solicitudes SET estado=$1, actualizada=NOW() WHERE id=$2', ['error', solicitudId]);
     throw e;
   }
@@ -1015,7 +1220,7 @@ function revisaDatos(sol) {
   return faltan;
 }
 
-app.get('/api/solicitudes/:id/revisar', auth, async (req, res) => {
+app.get('/api/solicitudes/:id/revisar', auth, alcance, async (req, res) => {
   try {
     const r = await q('SELECT * FROM buro_solicitudes WHERE id=$1', [req.params.id]);
     if (!r.rows.length) return res.status(404).json({ error: 'No existe esa solicitud.' });
@@ -1030,7 +1235,7 @@ app.get('/api/solicitudes/:id/revisar', auth, async (req, res) => {
   }
 });
 
-app.post('/api/solicitudes/:id/consultar', auth, async (req, res) => {
+app.post('/api/solicitudes/:id/consultar', auth, alcance, async (req, res) => {
   try {
     const tipo = req.body.tipo === 'reporte' ? 'reporte' : 'score';
     const sr = await q('SELECT * FROM buro_solicitudes WHERE id=$1', [req.params.id]);
@@ -1044,6 +1249,16 @@ app.post('/api/solicitudes/:id/consultar', auth, async (req, res) => {
       });
     }
     const c = await cuotaMes();
+    if (esGerente(req)) {
+      if (tipo !== 'score') return res.status(403).json({ error: 'El gerente solo puede consultar score.' });
+      if (c.restantes <= 0) {
+        return res.status(403).json({ error: 'Se agotaron las consultas del mes. Pide al administrador que la haga.' });
+      }
+      const mias = await usadasUsuario(req.user.u);
+      if (mias >= req.user.tope) {
+        return res.status(403).json({ error: 'Llegaste a tu tope de ' + req.user.tope + ' consultas este mes. Pide al administrador que lo amplíe.' });
+      }
+    }
     if (c.restantes <= 0 && !req.body.confirmado) {
       return res.status(409).json({
         error: 'Ya usaste las ' + CUOTA + ' consultas del mes. Esta se cobra aparte.',
@@ -1056,7 +1271,9 @@ app.post('/api/solicitudes/:id/consultar', auth, async (req, res) => {
         requiere_confirmacion: true
       });
     }
-    const out = await consultarMoffin(req.params.id, tipo, { forzar: !!req.body.forzar });
+    const out = await consultarMoffin(req.params.id, tipo,
+      { forzar: !esGerente(req) && !!req.body.forzar, usuario: req.user.u });
+    if (esGerente(req)) { delete out.resumen; }
     res.json(Object.assign({ ok: true }, out, { cuota: await cuotaMes() }));
   } catch (e) {
     res.status(502).json({ error: e.message });
@@ -1064,7 +1281,7 @@ app.post('/api/solicitudes/:id/consultar', auth, async (req, res) => {
 });
 
 /* ---------- Dictamen y entrega ---------- */
-app.post('/api/solicitudes/:id/dictamen', auth, async (req, res) => {
+app.post('/api/solicitudes/:id/dictamen', auth, soloAdmin, async (req, res) => {
   try {
     const sem = ['verde', 'ambar', 'rojo'].indexOf(req.body.semaforo) >= 0 ? req.body.semaforo : null;
     if (!sem) return res.status(400).json({ error: 'Elige verde, ámbar o rojo.' });
@@ -1102,7 +1319,7 @@ async function datosReporte(solicitudId) {
   };
 }
 
-app.get('/api/solicitudes/:id/reporte.pdf', auth, async (req, res) => {
+app.get('/api/solicitudes/:id/reporte.pdf', auth, soloAdmin, async (req, res) => {
   try {
     const d = await datosReporte(req.params.id);
     if (!d) return res.status(404).json({ error: 'Esta solicitud no tiene consulta registrada.' });
@@ -1187,7 +1404,7 @@ app.get('/api/dictamen/:token', async (req, res) => {
 });
 
 /* ---------- Exportar autorizaciones (auditoría CNBV / CONDUSEF / Moffin) ---------- */
-app.get('/api/export/autorizaciones', auth, async (req, res) => {
+app.get('/api/export/autorizaciones', auth, soloAdmin, async (req, res) => {
   try {
     const desde = req.query.desde || '2000-01-01';
     const hasta = req.query.hasta || '2999-12-31';
@@ -1232,7 +1449,7 @@ app.get('/api/hojas.pdf', auth, (req, res) => {
 });
 
 /* Subir la hoja firmada con pluma. Equivale a la firma en pantalla. */
-app.post('/api/solicitudes/:id/firma-papel', auth, async (req, res) => {
+app.post('/api/solicitudes/:id/firma-papel', auth, alcance, async (req, res) => {
   try {
     const dr = await q(
       `SELECT id, imagen, revisado FROM buro_documentos
@@ -1310,7 +1527,7 @@ const SQL_COMPROBANTE = `
          a.lugar, a.funcionario, a.modo, a.folio_bc, a.fecha_consulta_bc
   FROM buro_autorizaciones a JOIN buro_solicitudes s ON s.id = a.solicitud_id`;
 
-app.get('/api/solicitudes/:id/comprobante.pdf', auth, async (req, res) => {
+app.get('/api/solicitudes/:id/comprobante.pdf', auth, alcance, async (req, res) => {
   try {
     const r = await q(SQL_COMPROBANTE + ' WHERE a.solicitud_id=$1 ORDER BY a.id DESC LIMIT 1',
       [req.params.id]);
@@ -1324,7 +1541,7 @@ app.get('/api/solicitudes/:id/comprobante.pdf', auth, async (req, res) => {
   }
 });
 
-app.get('/api/export/comprobantes.pdf', auth, async (req, res) => {
+app.get('/api/export/comprobantes.pdf', auth, soloAdmin, async (req, res) => {
   try {
     const desde = req.query.desde || '2000-01-01';
     const hasta = req.query.hasta || '2999-12-31';
@@ -1340,7 +1557,7 @@ app.get('/api/export/comprobantes.pdf', auth, async (req, res) => {
 });
 
 /* Comprobante individual de una autorización (para exhibir) */
-app.get('/api/autorizacion/:id', auth, async (req, res) => {
+app.get('/api/autorizacion/:id', auth, soloAdmin, async (req, res) => {
   try {
     const r = await q(
       `SELECT a.*, s.folio, s.telefono FROM buro_autorizaciones a
@@ -1358,7 +1575,7 @@ app.get('/api/health', async (req, res) => {
     await q('SELECT 1');
     const c = await cuotaMes();
     res.json({
-      salud: true, version: '1.0', mock: MOFFIN_MOCK, entorno: MOFFIN_ENV,
+      salud: true, version: '1.1', mock: MOFFIN_MOCK, entorno: MOFFIN_ENV,
       cuota: c, hoy: hoyMX()
     });
   } catch (e) {
