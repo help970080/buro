@@ -1387,14 +1387,10 @@ async function datosReporte(solicitudId) {
      ORDER BY (tipo='reporte') DESC, id DESC LIMIT 1`, [solicitudId]);
   if (!c.rows.length) return null;
   const res = c.rows[0].resumen || resumeReporte(c.rows[0].payload);
-  const a = await q(`SELECT aceptada, modo, lugar, funcionario, ip, vence FROM buro_autorizaciones
-                     WHERE solicitud_id=$1 ORDER BY id DESC LIMIT 1`, [solicitudId]);
   let cot = null;
   try { cot = cotejo(s.rows[0], c.rows[0].payload, claveEstado); } catch (e) { /* opcional */ }
   return {
     cotejo: cot,
-    autorizacion: a.rows[0] || null,
-    consulta: { tipo: c.rows[0].tipo, usuario: c.rows[0].usuario || '' },
     payload: c.rows[0].payload,
     resumen: res,
     evaluacion: (res && res.evaluacion) || null,

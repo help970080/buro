@@ -376,38 +376,6 @@ function generaReportePDF(datos, salida) {
     y += 4;
   }
 
-  /* Datos de la consulta: evidencia de qué se consultó y con qué autorización */
-  if (cot || datos.autorizacion) {
-    const cq = (cot && cot.consulta) || {};
-    const au = datos.autorizacion || {};
-    const cons = datos.consulta || {};
-    const pares = [
-      ['Tipo de consulta', cq.tipo || (cons.tipo === 'reporte' ? 'Reporte completo' : 'Score')],
-      ['Folio de consulta', datos.folio_bc || '—'],
-      ['Número de control Buró', cq.control_bc || '—'],
-      ['Modelo de score', cq.modelo || 'BC Score'],
-      ['Expediente encontrado', cq.encontrado === false ? 'No' : 'Sí'],
-      ['Consultó', cons.usuario || '—'],
-      ['Fecha y hora de consulta', datos.consultada ? new Date(datos.consultada).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' }) : '—'],
-      ['Autorización firmada', au.aceptada ? new Date(au.aceptada).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' }) : '—'],
-      ['Modo de firma', au.modo === 'presencial' ? 'Presencial (en pantalla)' : (au.modo === 'papel' ? 'Hoja firmada' : (au.aceptada ? 'A distancia (folio y código)' : '—'))],
-      ['Lugar de firma', au.lugar || '—'],
-      ['Recabó la firma', au.funcionario || '—'],
-      ['Autorización vigente hasta', au.vence ? new Date(au.vence).toISOString().slice(0, 10) : '—']
-    ];
-    const filasP = Math.ceil(pares.length / 2);
-    y = salto(doc, y, filasP * 12 + 24, M);
-    y = barra(doc, 'Datos de la consulta y autorización', y, M, ANCHO);
-    const mitad = ANCHO / 2;
-    pares.forEach(function (pr, i) {
-      const col = i < filasP ? 0 : 1;
-      const fy = y + (i % filasP) * 12;
-      const fx = M + 4 + col * mitad;
-      doc.font('Helvetica').fontSize(6.6).fillColor(GRIS).text(pr[0], fx, fy + 1, { width: 110 });
-      doc.font('Helvetica-Bold').fontSize(6.8).fillColor(NEGRO).text(String(pr[1]), fx + 112, fy + 1, { width: mitad - 124, height: 9, ellipsis: true });
-    });
-    y += filasP * 12 + 6;
-  }
 
   /* Domicilios */
   const doms = lista(per.Domicilios, 'Domicilio');
