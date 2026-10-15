@@ -257,6 +257,7 @@
       <div class="barra">
         <h2 style="margin:0;flex:1">Bitácora de consultas</h2>
         <input id="b_mes" type="month" style="width:auto">
+        <button class="claro chico" id="b_reproc" title="Vuelve a leer las respuestas guardadas. No llama a Moffin ni cobra.">Releer respuestas guardadas</button>
       </div>
       <div id="bitUsu" class="scroll-x"></div>
       <h2 style="margin-top:18px">Últimas consultas del mes</h2>
@@ -803,6 +804,7 @@
             if (!d.dictamen) h += '<div class="aviso-sim" style="margin-top:10px">El administrador revisará el resultado y emitirá el dictamen.</div>';
           } else {
           h += '<button class="claro" id="d_reppdf" style="width:100%;margin-top:10px">Descargar reporte de crédito (PDF)</button>' +
+            '<button class="claro chico" id="d_crudo" data-c="' + c.id + '" style="width:100%;margin-top:8px">Descargar respuesta de Moffin (JSON)</button>' +
             '<div style="font-size:12px;color:#6B7A88;margin-top:6px">Uso interno. El enlace de la agencia solo muestra el dictamen.</div>';
           }
           if (c.resumen && !gerente()){
@@ -960,6 +962,12 @@
     if (rp) rp.addEventListener('click', function(){
       bajaArchivo('/api/solicitudes/' + actual + '/reporte.pdf',
                   'reporte-' + actual + '.pdf', 'd_msg');
+    });
+
+    /* Respuesta cruda de Moffin */
+    var cr = $('d_crudo');
+    if (cr) cr.addEventListener('click', function(){
+      bajaArchivo('/api/consultas/' + cr.getAttribute('data-c') + '/crudo', 'moffin-' + cr.getAttribute('data-c') + '.json', 'd_msg');
     });
 
     /* Código nuevo para el cliente */
@@ -1133,6 +1141,14 @@
 
   /* ---- Bitácora (admin) ---- */
   $('b_mes').addEventListener('change', bitacora);
+  $('b_reproc').addEventListener('click', function(){
+    var b = this; b.disabled = true; b.textContent = 'Releyendo...';
+    api('/api/consultas/reprocesar', {method:'POST', body:{}}).then(function(r){
+      alert('Revisadas: ' + r.revisadas + '\nLeídas: ' + r.leidas + '\nCon score: ' + r.con_score + '\nNo se cobró nada.');
+      bitacora(); lista();
+    }).catch(function(e){ alert(e.message); })
+    .then(function(){ b.disabled = false; b.textContent = 'Releer respuestas guardadas'; });
+  });
   function bitacora(){
     var mes = $('b_mes').value;
     api('/api/bitacora' + (mes ? '?mes=' + mes : '')).then(function(b){

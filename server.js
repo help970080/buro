@@ -1306,6 +1306,43 @@ app.post('/api/solicitudes/:id/consultar', auth, alcance, async (req, res) => {
   }
 });
 
+/* ---------- Respuesta cruda de Moffin y relectura sin cobrar ---------- */
+app.get('/api/consultas/:id/crudo', auth, soloAdmin, async (req, res) => {
+  try {
+    const r = await q('SELECT id, tipo, folio_moffin, payload FROM buro_consultas WHERE id=$1', [req.params.id]);
+    if (!r.rows.length || !r.rows[0].payload) return res.status(404).json({ error: 'Esa consulta no tiene respuesta guardada.' });
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="moffin-' + r.rows[0].tipo + '-' + (r.rows[0].folio_moffin || r.rows[0].id) + '.json"');
+    res.send(JSON.stringify(r.rows[0].payload, null, 2));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* Vuelve a leer las respuestas guardadas con el lector actual. No llama a Moffin ni cobra. */
+app.post('/api/consultas/reprocesar', auth, soloAdmin, async (req, res) => {
+  try {
+    const r = await q(`SELECT id, payload FROM buro_consultas
+      WHERE payload IS NOT NULL AND error IS NULL AND folio_moffin NOT LIKE 'CACHE-%' ORDER BY id`);
+    let leidas = 0, conScore = 0;
+    for (const x of r.rows) {
+      const lectura = resumeReporte(x.payload);
+      const resumen = Object.assign({}, lectura, semaforoSugerido(lectura));
+      delete resumen.error_lectura;
+      try { resumen.evaluacion = evalua(x.payload, lectura); } catch (e) { /* opcional */ }
+      await q('UPDATE buro_consultas SET score=$1, resumen=$2 WHERE id=$3', [lectura.score, JSON.stringify(resumen), x.id]);
+      if (lectura.ok) leidas++;
+      if (lectura.score !== null && lectura.score !== undefined) conScore++;
+    }
+    /* Las reutilizadas (CACHE-) copian el resultado de su original */
+    await q(`UPDATE buro_consultas c SET score=o.score, resumen=o.resumen
+             FROM buro_consultas o WHERE c.folio_moffin = 'CACHE-' || o.id`);
+    res.json({ revisadas: r.rows.length, leidas: leidas, con_score: conScore });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 /* ---------- Dictamen y entrega ---------- */
 app.post('/api/solicitudes/:id/dictamen', auth, soloAdmin, async (req, res) => {
   try {
