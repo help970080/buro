@@ -465,6 +465,7 @@ function datosRol(b) {
 const SSO_SECRET = process.env.BURO_SSO_SECRET || '';
 const SSO_TOPE = parseInt(process.env.BURO_SSO_TOPE || '50', 10) || 50;
 const PASES = new Map();
+const AUTS = new Map();   // autorizaciones firmadas en CobraPro, en espera de que se cree la solicitud (24 h)
 function ssoFirmaOk(payload, ts, firma) {
   if (!SSO_SECRET || !payload || !firma) return false;
   if (!(Math.abs(Date.now() - (+ts || 0)) < 120000)) return false;
@@ -491,8 +492,19 @@ app.post('/api/sso/pase', async (req, res) => {
     }
     const ahora = Date.now();
     for (const [k, v] of PASES) if (v.exp < ahora) PASES.delete(k);
+    for (const [k, v] of AUTS) if (v.exp < ahora) AUTS.delete(k);
+    const pre = p.pre && typeof p.pre === 'object' ? p.pre : null;
+    /* La firma de la autorización NO va al navegador: se queda aquí y el panel solo recibe un id para ligarla. */
+    if (pre && pre.aut && typeof pre.aut === 'object') {
+      const a = pre.aut; delete pre.aut;
+      if (a.hash === HASH_AUTORIZACION && /^data:image\//.test(a.firma || '')) {
+        const autId = crypto.randomBytes(18).toString('base64url');
+        AUTS.set(autId, { usuario, curp: String(pre.curp || '').toUpperCase().trim(), aut: a, exp: ahora + 24 * 3600 * 1000 });
+        pre.autId = autId; pre.autInfo = { aceptada: a.aceptada || '', por: a.por || '' };
+      }
+    }
     const id = crypto.randomBytes(18).toString('base64url');
-    PASES.set(id, { usuario, exp: ahora + 120000, pre: p.pre && typeof p.pre === 'object' ? p.pre : null });
+    PASES.set(id, { usuario, exp: ahora + 120000, pre });
     res.json({ pase: id });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -510,6 +522,43 @@ app.post('/api/sso/canjear', async (req, res) => {
     q('UPDATE buro_usuarios SET ultimo_acceso=NOW() WHERE id=$1', [u.id]).catch(() => {});
     res.json({ token: firmaJWT({ t: 'equipo', u: u.usuario, n: u.nombre }, 12), nombre: u.nombre, usuario: u.usuario,
       rol: u.rol || 'admin', agencia: u.agencia || '', pre: p.pre });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* Liga a la solicitud recién creada la autorización que el cliente firmó en la solicitud de CobraPro (leyó en
+   pantalla el texto literal del Anexo A; misma huella sha256). Solo el usuario que trajo el pase y solo si la
+   CURP coincide. Queda como autorización modo 'cobrapro' y dispara la consulta automática como las demás. */
+app.post('/api/solicitudes/:id/aut-cobrapro', auth, alcance, async (req, res) => {
+  try {
+    const id = String((req.body && req.body.autId) || '');
+    const a = AUTS.get(id);
+    if (!a || a.exp < Date.now()) return res.status(410).json({ error: 'La autorización de CobraPro ya no está disponible. Usa folio y código u hoja firmada.' });
+    if (a.usuario !== req.user.u) return res.status(403).json({ error: 'Esa autorización la trajo otro usuario.' });
+    const s = await q('SELECT * FROM buro_solicitudes WHERE id=$1', [req.params.id]);
+    if (!s.rows.length) return res.status(404).json({ error: 'No existe esa solicitud.' });
+    const sol = s.rows[0];
+    if (!a.curp || String(sol.curp || '').toUpperCase().trim() !== a.curp) return res.status(409).json({ error: 'La CURP de la solicitud no coincide con la de la autorización firmada en CobraPro.' });
+    if (['autorizada', 'consultada', 'entregada'].indexOf(sol.estado) >= 0) return res.status(409).json({ error: 'Esta solicitud ya tiene autorización.' });
+    if (a.aut.hash !== HASH_AUTORIZACION) return res.status(409).json({ error: 'El texto de autorización firmado no coincide con el vigente.' });
+    const acept = new Date(a.aut.aceptada || Date.now());
+    const aceptada = isNaN(acept) ? new Date() : acept;
+    const vence = new Date(aceptada); vence.setFullYear(vence.getFullYear() + 3);
+    const datos = { nombre: sol.nombre, apellido_p: sol.apellido_p, apellido_m: sol.apellido_m, curp: sol.curp, rfc: sol.rfc,
+      fecha_nac: sol.fecha_nac, calle: sol.calle, colonia: sol.colonia, municipio: sol.municipio, estado_dom: sol.estado_dom, cp: sol.cp,
+      origen: 'CobraPro · solicitud de campo', gps: (a.aut.lat != null && a.aut.lng != null) ? [a.aut.lat, a.aut.lng] : null };
+    await q(
+      `INSERT INTO buro_autorizaciones(solicitud_id, texto_hash, texto, firma, ip, agente, datos,
+        lugar, telefono, funcionario, modo, aceptada, vence)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [sol.id, HASH_AUTORIZACION, TEXTO_AUTORIZACION, a.aut.firma, String(a.aut.ip || '').slice(0, 60), String(a.aut.agente || '').slice(0, 300),
+        JSON.stringify(datos), String(a.aut.lugar || '').slice(0, 120) || [sol.municipio, sol.estado_dom].filter(Boolean).join(', '),
+        sol.telefono || '', String(a.aut.por || '').slice(0, 90) || req.user.n, 'cobrapro', aceptada.toISOString(), vence.toISOString().slice(0, 10)]);
+    await q(`UPDATE buro_solicitudes SET estado='autorizada', actualizada=NOW() WHERE id=$1`, [sol.id]);
+    AUTS.delete(id);
+    res.json({ ok: true });
+    consultaAutomatica(sol.id, sol.creada_por || req.user.u).catch(e => console.error('consulta bg:', e.message));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

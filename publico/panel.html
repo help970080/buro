@@ -494,6 +494,7 @@
 
   /* ---- Lectura de INE ---- */
   var ineCreacion = null;
+  var autCobraPro = null;   // id de la autorización firmada en CobraPro (la firma se queda en el servidor)
   $('n_ine').addEventListener('change', function(){
     var f = this.files && this.files[0];
     ineCreacion = null;
@@ -569,11 +570,19 @@
       $('n_rfc').dataset.tocado = ''; $('n_rfc_nota').textContent = '';
       msg('mnueva','');
       muestraFolio(s);
-      if (ineSube){
-        api('/api/solicitudes/' + s.id + '/documento', {method:'POST', body:{tipo:'ine', imagen: ineSube}})
-          .then(function(){ msg('mllamar','INE guardada como evidencia.','ok'); })
-          .catch(function(e){ msg('mllamar','No se guardó la INE: ' + e.message + ' Súbela desde la solicitud.','err'); });
-      }
+      var autSube = autCobraPro; autCobraPro = null;
+      /* Primero la INE (la consulta automática la espera) y luego la autorización firmada en CobraPro. */
+      var pIne = ineSube
+        ? api('/api/solicitudes/' + s.id + '/documento', {method:'POST', body:{tipo:'ine', imagen: ineSube}})
+            .then(function(){ msg('mllamar','INE guardada como evidencia.','ok'); })
+            .catch(function(e){ msg('mllamar','No se guardó la INE: ' + e.message + ' Súbela desde la solicitud.','err'); })
+        : Promise.resolve();
+      if (autSube) pIne.then(function(){
+        return api('/api/solicitudes/' + s.id + '/aut-cobrapro', {method:'POST', body:{autId: autSube}});
+      }).then(function(){
+        msg('mllamar','✓ Autorización firmada por el cliente en CobraPro registrada. No hace falta folio ni código: el score se consulta solo.','ok');
+        lista();
+      }).catch(function(e){ msg('mllamar','No se pudo usar la autorización de CobraPro: ' + e.message + ' Sigue con folio y código o la hoja firmada.','err'); });
       lista();
     }).catch(function(e){
       $('bnueva').disabled = false;
@@ -1405,8 +1414,9 @@
       for (var i = 0; i < sel.options.length; i++){ if (nrm(sel.options[i].text) === obj || nrm(sel.options[i].value) === obj){ sel.selectedIndex = i; break; } }
     }
     if (p.ine && /^data:image\//.test(p.ine)) ineCreacion = p.ine;
+    autCobraPro = p.autId || null;
     try { calculaRFCPanel(); } catch(e){}
-    msg('mnueva', 'Datos traídos de CobraPro' + (ineCreacion ? ' (con foto de la INE)' : '') + '. Revísalos y completa lo que falte antes de crear.', 'ok');
+    msg('mnueva', 'Datos traídos de CobraPro' + (ineCreacion ? ' (con foto de la INE)' : '') + (autCobraPro ? ' y con la autorización de buró que el cliente firmó en la solicitud' : '') + '. Revísalos y completa lo que falte antes de crear.', 'ok');
     var t = $('n_tel'); if (t && t.scrollIntoView) t.scrollIntoView({behavior:'smooth', block:'center'});
   }
   var pase = (location.hash.match(/pase=([\w-]+)/) || [])[1];

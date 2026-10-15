@@ -146,7 +146,9 @@ function hoja(doc, d) {
   doc.text('Recabó: ' + (d.funcionario || '—'), xd, yc); yc += 13;
   doc.text('Modo: ' + (d.modo === 'presencial'
     ? 'Firma en dispositivo, cliente presente'
-    : 'Firma en dispositivo, autenticado por folio y código'), xd, yc, { width: ANCHO - 280 });
+    : d.modo === 'cobrapro'
+      ? 'Firma en dispositivo del promotor, cliente presente (solicitud de crédito CobraPro con el texto de esta autorización a la vista)'
+      : 'Firma en dispositivo, autenticado por folio y código'), xd, yc, { width: ANCHO - 280 });
   yc = doc.y + 3;
   doc.text('Dirección IP: ' + (d.ip || '—'), xd, yc); yc += 13;
   if (d.texto_hash) {
