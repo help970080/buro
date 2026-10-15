@@ -233,6 +233,12 @@
       <div><label for="n_cp">Código postal</label><input id="n_cp" type="tel" maxlength="5"></div>
     </div>
     <div class="rejilla">
+      <div><label for="n_calle">Calle y número</label><input id="n_calle" type="text"></div>
+      <div><label for="n_col">Colonia</label><input id="n_col" type="text"></div>
+      <div><label for="n_mun">Municipio o alcaldía</label><input id="n_mun" type="text"></div>
+    </div>
+    <div class="rejilla">
+      <div><label for="n_edo">Estado</label><select id="n_edo"><option value="">Elige el estado</option><option>Aguascalientes</option><option>Baja California</option><option>Baja California Sur</option><option>Campeche</option><option>Chiapas</option><option>Chihuahua</option><option>Ciudad de México</option><option>Coahuila</option><option>Colima</option><option>Durango</option><option>Estado de México</option><option>Guanajuato</option><option>Guerrero</option><option>Hidalgo</option><option>Jalisco</option><option>Michoacán</option><option>Morelos</option><option>Nayarit</option><option>Nuevo León</option><option>Oaxaca</option><option>Puebla</option><option>Querétaro</option><option>Quintana Roo</option><option>San Luis Potosí</option><option>Sinaloa</option><option>Sonora</option><option>Tabasco</option><option>Tamaulipas</option><option>Tlaxcala</option><option>Veracruz</option><option>Yucatán</option><option>Zacatecas</option></select></div>
       <div>
         <label for="n_rfc">RFC (se calcula solo)</label>
         <input id="n_rfc" type="text" maxlength="13">
@@ -548,13 +554,14 @@
       telefono: $('n_tel').value, agencia: $('n_agencia').value,
       nombre: $('n_nombre').value, apellido_p: $('n_ap').value, apellido_m: $('n_am').value,
       curp: $('n_curp').value, fecha_nac: $('n_nac').value, cp: $('n_cp').value,
-      rfc: $('n_rfc').value
+      rfc: $('n_rfc').value, calle: $('n_calle').value, colonia: $('n_col').value,
+      municipio: $('n_mun').value, estado_dom: $('n_edo').value
     };
     $('bnueva').disabled = true;
     api('/api/solicitudes', {method:'POST', body:cuerpo})
     .then(function(s){
       $('bnueva').disabled = false;
-      ['n_tel','n_agencia','n_nombre','n_ap','n_am','n_curp','n_nac','n_cp','n_ine','n_rfc'].forEach(function(x){ $(x).value=''; });
+      ['n_tel','n_agencia','n_nombre','n_ap','n_am','n_curp','n_nac','n_cp','n_ine','n_rfc','n_calle','n_col','n_mun','n_edo'].forEach(function(x){ $(x).value=''; });
       var ineSube = ineCreacion; ineCreacion = null;
       if (gerente()) $('n_agencia').value = MI_AGENCIA;
       $('n_rfc').dataset.tocado = ''; $('n_rfc_nota').textContent = '';
@@ -866,6 +873,13 @@
         '<div class="dato"><span>RFC</span><span>' + esc(s.rfc || '—') + '</span></div>' +
         '<div class="dato"><span>Agencia</span><span>' + esc(s.agencia || '—') + '</span></div>' +
         '<div class="dato"><span>Estado</span><span><span class="pill ' + esc(s.estado) + '">' + esc(s.estado) + '</span></span></div>';
+      var editable = ['nueva','abierta','autorizada','error'].indexOf(s.estado) >= 0;
+      if (editable){
+        h += '<div class="dato"><span>Domicilio</span><span style="font-weight:600">' +
+          esc([s.calle, s.colonia, s.municipio, s.estado_dom, s.cp].filter(Boolean).join(', ') || '—') + '</span></div>' +
+          '<div class="dato"><span>Fecha de nacimiento</span><span>' + esc(s.fecha_nac || '—') + '</span></div>' +
+          '<button class="claro" id="d_editar" style="width:100%;margin-top:10px">Editar / completar datos del cliente</button>';
+      }
 
       if (['nueva','abierta'].indexOf(s.estado) >= 0){
         h += '<h2 style="margin-top:18px;font-size:13px;letter-spacing:.09em;text-transform:uppercase;color:#6B7A88">Falta la autorización del cliente</h2>' +
@@ -1114,6 +1128,9 @@
                   'reporte-' + actual + '.pdf', 'd_msg');
     });
 
+    var de = $('d_editar');
+    if (de) de.addEventListener('click', editarDatos);
+
     /* Respuesta cruda de Moffin */
     var cr = $('d_crudo');
     if (cr) cr.addEventListener('click', function(){
@@ -1156,7 +1173,10 @@
         $('d_revision').innerHTML = v.listo
           ? '<div class="msg ok" style="display:block">Los datos cumplen lo que pide Buró. Listo para consultar.</div>'
           : '<div class="msg err" style="display:block"><b>Antes de consultar, faltan:</b><br>' +
-            esc(v.faltan.join(' · ')) + '</div>';
+            esc(v.faltan.join(' · ')) +
+            '<button class="chico" id="d_completar" style="display:block;margin-top:10px">Completar datos ahora</button></div>';
+        var dc = $('d_completar');
+        if (dc) dc.addEventListener('click', editarDatos);
       }).catch(function(){});
     }
 
@@ -1167,6 +1187,47 @@
       try { document.execCommand('copy'); msg('d_msg','Enlace copiado.','ok'); }
       catch(e){ msg('d_msg','Copia el enlace a mano.','err'); }
     });
+  }
+
+  /* ---- Editar / completar datos del cliente ---- */
+  function editarDatos(){
+    api('/api/solicitudes/' + actual).then(function(d){
+      var s = d.solicitud;
+      var campos = [
+        ['e_tel','Teléfono (10 dígitos)','telefono','tel'], ['e_nombre','Nombre(s)','nombre'],
+        ['e_ap','Apellido paterno','apellido_p'], ['e_am','Apellido materno','apellido_m'],
+        ['e_curp','CURP','curp'], ['e_nac','Fecha de nacimiento','fecha_nac','date'],
+        ['e_rfc','RFC (vacío = se calcula)','rfc'], ['e_calle','Calle y número','calle'],
+        ['e_col','Colonia','colonia'], ['e_mun','Municipio o alcaldía','municipio'],
+        ['e_cp','Código postal','cp','tel']
+      ];
+      var h = '<p style="color:#64748B;margin:0 0 6px">Corrige o completa los datos tal como vienen en la INE.</p><div class="rejilla">';
+      campos.forEach(function(c){
+        h += '<div><label for="' + c[0] + '">' + c[1] + '</label><input id="' + c[0] + '" type="' + (c[3] || 'text') +
+          '" value="' + esc(s[c[2]] || '') + '"></div>';
+      });
+      h += '<div><label for="e_edo">Estado</label><select id="e_edo">' + $('n_edo').innerHTML + '</select></div></div>' +
+        '<div id="e_msg" class="msg"></div>' +
+        '<div style="display:flex;gap:10px;margin-top:14px"><button id="e_guardar" style="flex:1">Guardar datos</button>' +
+        '<button class="claro" id="e_cancelar">Cancelar</button></div>';
+      $('d_titulo').textContent = 'Datos del cliente · Folio ' + s.folio;
+      $('d_cuerpo').innerHTML = h;
+      var sel = $('e_edo'), val = String(s.estado_dom || '').toUpperCase();
+      for (var i = 0; i < sel.options.length; i++){
+        var o = sel.options[i].text.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+        if (val && (o === val.normalize('NFD').replace(/[\u0300-\u036f]/g,''))) { sel.selectedIndex = i; break; }
+      }
+      if (val && sel.selectedIndex <= 0){ var op = document.createElement('option'); op.text = s.estado_dom; sel.add(op); sel.value = s.estado_dom; }
+      $('e_cancelar').addEventListener('click', function(){ abre(actual); });
+      $('e_guardar').addEventListener('click', function(){
+        var b = this; b.disabled = true;
+        var cuerpo = { estado_dom: $('e_edo').value };
+        campos.forEach(function(c){ cuerpo[c[2]] = $(c[0]).value; });
+        api('/api/solicitudes/' + actual, {method:'PUT', body: cuerpo})
+          .then(function(){ abre(actual); lista(); })
+          .catch(function(e){ b.disabled = false; msg('e_msg', e.message, 'err'); });
+      });
+    }).catch(function(e){ alert(e.message); });
   }
 
   function consulta(tipo, confirmado){

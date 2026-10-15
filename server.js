@@ -331,6 +331,8 @@ async function initDB() {
     await q('ALTER TABLE buro_usuarios ADD COLUMN IF NOT EXISTS ' + col);
   }
   await q('ALTER TABLE buro_consultas ADD COLUMN IF NOT EXISTS usuario TEXT');
+  await q('ALTER TABLE buro_solicitudes ADD COLUMN IF NOT EXISTS editada_por TEXT');
+  await q('ALTER TABLE buro_solicitudes ADD COLUMN IF NOT EXISTS editada TIMESTAMPTZ');
   await q(`CREATE INDEX IF NOT EXISTS ix_cons_usuario ON buro_consultas(usuario, mes)`);
   await q(`CREATE INDEX IF NOT EXISTS ix_sol_agencia ON buro_solicitudes((UPPER(TRIM(agencia))))`);
 
@@ -753,6 +755,10 @@ app.post('/api/solicitudes', auth, async (req, res) => {
         apellido_m: b.apellido_m, curp: b.curp, fecha_nac: b.fecha_nac });
       if (c.rfc) rfc = c.rfc;
     }
+    const faltanAlta = faltanCaptura(Object.assign({}, b, { rfc: rfc }));
+    if (faltanAlta.length) {
+      return res.status(400).json({ error: 'Faltan datos: ' + faltanAlta.join(', ') + '.', faltan: faltanAlta });
+    }
     let folio;
     for (let i = 0; i < 12; i++) {
       folio = digitos(6);
@@ -773,6 +779,59 @@ app.post('/api/solicitudes', auth, async (req, res) => {
         req.user.u, exp]
     );
     res.json(r.rows[0]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* Lo mínimo que Buró pide para consultar (el apellido materno solo lo exige el reporte) */
+function faltanCaptura(b) {
+  const f = [];
+  if (!normNombre(b.nombre)) f.push('nombre');
+  if (!normNombre(b.apellido_p)) f.push('apellido paterno');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(b.fecha_nac || '')) f.push('fecha de nacimiento');
+  if (String(b.rfc || '').trim().length < 10) f.push('RFC');
+  if (!String(b.calle || '').trim()) f.push('calle y número');
+  if (!String(b.colonia || '').trim()) f.push('colonia');
+  if (!String(b.municipio || '').trim()) f.push('municipio');
+  if (!claveEstado(b.estado_dom)) f.push('estado');
+  if (String(b.cp || '').replace(/\D/g, '').length !== 5) f.push('código postal');
+  return f;
+}
+
+/* Corregir o completar datos antes de consultar */
+app.put('/api/solicitudes/:id', auth, alcance, async (req, res) => {
+  try {
+    const r = await q('SELECT * FROM buro_solicitudes WHERE id=$1', [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'No existe esa solicitud.' });
+    const s = r.rows[0];
+    if (['consultada', 'entregada'].indexOf(s.estado) >= 0) {
+      return res.status(409).json({ error: 'Esta solicitud ya fue consultada; sus datos ya no se pueden cambiar.' });
+    }
+    const b = req.body || {};
+    const v = function (k) { return b[k] !== undefined ? String(b[k]) : (s[k] || ''); };
+    const n = {
+      telefono: v('telefono').replace(/\D/g, ''),
+      nombre: normNombre(v('nombre')), apellido_p: normNombre(v('apellido_p')), apellido_m: normNombre(v('apellido_m')),
+      curp: v('curp').toUpperCase().trim(), rfc: v('rfc').toUpperCase().trim(), fecha_nac: v('fecha_nac').trim(),
+      calle: v('calle').trim().slice(0, 120), colonia: v('colonia').trim().slice(0, 120),
+      municipio: v('municipio').trim().slice(0, 120), estado_dom: v('estado_dom').trim().slice(0, 60),
+      cp: v('cp').replace(/\D/g, '').slice(0, 5)
+    };
+    if (n.telefono.length !== 10) return res.status(400).json({ error: 'El teléfono debe tener 10 dígitos.' });
+    if (!n.rfc) {
+      const c = calculaRFC({ nombre: n.nombre, apellido_p: n.apellido_p, apellido_m: n.apellido_m, curp: n.curp, fecha_nac: n.fecha_nac });
+      if (c.rfc) n.rfc = c.rfc;
+    }
+    const faltan = faltanCaptura(n);
+    if (faltan.length) return res.status(400).json({ error: 'Faltan datos: ' + faltan.join(', ') + '.', faltan: faltan });
+    const u = await q(
+      `UPDATE buro_solicitudes SET telefono=$1, nombre=$2, apellido_p=$3, apellido_m=$4, curp=$5, rfc=$6, fecha_nac=$7,
+         calle=$8, colonia=$9, municipio=$10, estado_dom=$11, cp=$12, editada_por=$13, editada=NOW(), actualizada=NOW()
+       WHERE id=$14 RETURNING *`,
+      [n.telefono, n.nombre, n.apellido_p, n.apellido_m, n.curp, n.rfc, n.fecha_nac,
+        n.calle, n.colonia, n.municipio, n.estado_dom, n.cp, req.user.u, req.params.id]);
+    res.json(u.rows[0]);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
