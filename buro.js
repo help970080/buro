@@ -79,7 +79,8 @@ function leeScore(persona) {
 
   const bruto = String(s0.ValorScore || '').trim();
   const n = parseInt(bruto, 10);
-  const razones = [s0.CodigoScore, s0.CodigoRazon1, s0.CodigoRazon2,
+  /* CodigoScore es el modelo (007 = BC Score), no una razón */
+  const razones = [s0.CodigoRazon1, s0.CodigoRazon2,
     s0.CodigoRazon3, s0.CodigoRazon4]
     .filter(x => x && String(x).trim() && String(x).trim() !== '00');
 
@@ -89,10 +90,11 @@ function leeScore(persona) {
       texto: bruto === '-008' || n === -8
         ? 'Sin score: Buró no tiene información suficiente'
         : 'Sin score (clave ' + (bruto || 'sin dato') + ')',
-      razones: razones
+      razones: razones,
+      clave: bruto
     };
   }
-  return { score: n, texto: String(n), razones: razones };
+  return { score: n, texto: String(n), razones: razones, clave: '' };
 }
 
 /* MOP: 1 = al corriente. 2 a 7 = atrasos crecientes.
@@ -192,6 +194,7 @@ function resumeReporte(payload) {
 
   try {
     payload = normaliza(payload);
+    base.origen = (payload && payload.origen) || 'reporte';
     const per = lista(payload && payload.return && payload.return.Personas, 'Persona')[0];
     if (!per) return base;
     base.ok = true;
@@ -205,6 +208,8 @@ function resumeReporte(payload) {
     base.score = sc.score;
     base.score_texto = sc.texto;
     base.razones = sc.razones;
+    base.score_clave = sc.clave;
+    base.claves_razon = sc.razones;   /* el semáforo sugerido reutiliza "razones" para su propio texto */
 
     const cuentas = lista(per.Cuentas, 'Cuenta');
     base.cuentas = cuentas.length;

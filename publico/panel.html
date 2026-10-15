@@ -642,6 +642,31 @@
     });
   }
 
+  /* ---- Tacómetro del BC Score ---- */
+  var BANDAS = [[456,549,'#C0392B'],[550,619,'#E67E22'],[620,679,'#D4AC0D'],[680,719,'#27AE60'],[720,760,'#1E7A45']];
+  function tacometro(it){
+    var MIN=456, MAX=760, cx=130, cy=118, R=92;
+    function pt(v, rr){ var t=Math.PI*(1-(Math.min(MAX,Math.max(MIN,v))-MIN)/(MAX-MIN)); return [cx+rr*Math.cos(t), cy-rr*Math.sin(t)]; }
+    var sinScore = !it || it.score === null || it.score === undefined;
+    var h = '<svg viewBox="0 0 260 160" style="width:100%;max-width:300px;display:block;margin:6px auto 0">';
+    BANDAS.forEach(function(b,i){
+      var a0=pt(i===0?MIN:b[0],R), a1=pt(i===BANDAS.length-1?MAX:b[1]+1,R);
+      h += '<path d="M'+a0[0].toFixed(1)+' '+a0[1].toFixed(1)+' A'+R+' '+R+' 0 0 1 '+a1[0].toFixed(1)+' '+a1[1].toFixed(1)+'" stroke="'+b[2]+'" stroke-width="18" fill="none" opacity="'+(sinScore?0.25:1)+'"/>';
+    });
+    [MIN,550,620,680,720,MAX].forEach(function(v){ var p=pt(v,R+20); h+='<text x="'+p[0].toFixed(1)+'" y="'+(p[1]+3).toFixed(1)+'" font-size="9" fill="#64748B" text-anchor="middle">'+v+'</text>'; });
+    if (!sinScore){
+      var pn=pt(it.score,R-16);
+      h += '<line x1="'+cx+'" y1="'+cy+'" x2="'+pn[0].toFixed(1)+'" y2="'+pn[1].toFixed(1)+'" stroke="#1F2937" stroke-width="4" stroke-linecap="round"/>' +
+        '<circle cx="'+cx+'" cy="'+cy+'" r="7" fill="#1F2937"/>' +
+        '<text x="'+cx+'" y="'+(cy-38)+'" font-size="34" font-weight="800" fill="'+it.color+'" text-anchor="middle">'+it.score+'</text>';
+    } else {
+      h += '<text x="'+cx+'" y="'+(cy-30)+'" font-size="18" font-weight="800" fill="#64748B" text-anchor="middle">SIN SCORE</text>';
+    }
+    h += '<text x="'+cx+'" y="'+(cy+24)+'" font-size="12" font-weight="800" fill="'+(it?it.color:'#64748B')+'" text-anchor="middle">'+esc(String((it&&it.banda)||'').toUpperCase())+'</text>' +
+      '<text x="'+cx+'" y="'+(cy+38)+'" font-size="8.5" fill="#64748B" text-anchor="middle" letter-spacing="1">BC SCORE · BURÓ DE CRÉDITO</text></svg>';
+    return h;
+  }
+
   /* ---- Lista ---- */
   function filtrosQS(){
     return '&agencia=' + encodeURIComponent(gerente() ? '' : $('f_agencia').value) +
@@ -792,10 +817,36 @@
         if (c.error){
           h += '<div class="msg err" style="display:block">' + esc(c.error) + '</div>';
         } else {
+          if (c.interpretacion) h += tacometro(c.interpretacion);
+          var itp = c.interpretacion;
+          if (itp && itp.resumen){
+            h += '<div style="margin:6px 0 12px;padding:14px;border:1px solid #E1E6F0;border-radius:12px;border-left:5px solid ' + itp.color + '">' +
+              '<div style="font-size:14px;color:#14213D">' + esc(itp.resumen) + '</div>';
+            if (itp.en_contra.length || itp.en_contra_cuentas.length){
+              h += '<div style="margin-top:12px;font-size:11px;font-weight:800;letter-spacing:.06em;color:#B91C1C">POR QUÉ BURÓ LE DA ESTE SCORE</div>' +
+                itp.en_contra.map(function(k){
+                  var col = k.gravedad >= 3 ? '#DC2626' : (k.gravedad === 2 ? '#D97706' : '#64748B');
+                  return '<div style="display:flex;gap:9px;align-items:flex-start;margin-top:7px;font-size:13.5px">' +
+                    '<span style="background:' + col + ';color:#fff;font-weight:800;font-size:11px;padding:2px 7px;border-radius:6px;flex:none">' + esc(k.clave) + '</span>' +
+                    '<span>' + esc(k.texto) + '</span></div>';
+                }).join('') +
+                itp.en_contra_cuentas.map(function(t){ return '<div style="margin-top:6px;font-size:13px;color:#3B4A6B">• ' + esc(t) + '</div>'; }).join('');
+            }
+            if (itp.a_favor.length){
+              h += '<div style="margin-top:12px;font-size:11px;font-weight:800;letter-spacing:.06em;color:#047857">A FAVOR</div>' +
+                itp.a_favor.map(function(t){ return '<div style="margin-top:6px;font-size:13.5px">✓ ' + esc(t) + '</div>'; }).join('');
+            }
+            if (!itp.solo_score && c.resumen && c.resumen.evaluacion){
+              h += '<div style="margin-top:12px;font-size:13px;color:#3B4A6B">Ya paga <b>' + pesos(c.resumen.evaluacion.compromiso_mensual) +
+                '</b> al mes en ' + c.resumen.evaluacion.creditos_activos + ' crédito(s) activo(s).</div>';
+            }
+            if (itp.nota) h += '<div style="margin-top:12px;font-size:12px;color:#64748B;font-style:italic">' + esc(itp.nota) + '</div>';
+            h += '</div>';
+          }
           h += '<div class="dato"><span>Folio de consulta BC</span><span>' +
               esc(c.folio_moffin || '—') + '</span></div>' +
             '<div class="dato"><span>Tipo</span><span>' + esc(c.tipo) + '</span></div>' +
-            '<div class="dato"><span>Score</span><span style="font-size:20px">' + (c.score || '—') + '</span></div>' +
+            (c.interpretacion ? '' : '<div class="dato"><span>Score</span><span style="font-size:20px">' + (c.score || '—') + '</span></div>') +
             '<div class="dato"><span>Fecha</span><span>' + fecha(c.consultada) + '</span></div>' +
             (c.usuario ? '<div class="dato"><span>Consultó</span><span>' + esc(c.usuario) + '</span></div>' : '');
           if (c.simulada) h += '<div class="aviso-sim">Consulta simulada o reutilizada. No se cobró.</div>';
@@ -807,7 +858,7 @@
             '<button class="claro chico" id="d_crudo" data-c="' + c.id + '" style="width:100%;margin-top:8px">Descargar respuesta de Moffin (JSON)</button>' +
             '<div style="font-size:12px;color:#6B7A88;margin-top:6px">Uso interno. El enlace de la agencia solo muestra el dictamen.</div>';
           }
-          if (c.resumen && !gerente()){
+          if (c.resumen && !gerente() && !(c.interpretacion && c.interpretacion.solo_score)){
             var r = c.resumen;
             if (r.score_texto && !c.score) h += '<div class="dato"><span>Nota del score</span><span>' + esc(r.score_texto) + '</span></div>';
             h += '<div class="dato"><span>Cuentas</span><span>' + (r.cuentas || 0) + '</span></div>' +
@@ -848,32 +899,6 @@
                   return '<li>' + t + '</li>';
                 }).join('') + '</ul></div>';
             }
-            if (r.evaluacion){
-              var ev = r.evaluacion;
-              var colE = ev.semaforo === 'verde' ? '#1E6F50'
-                : (ev.semaforo === 'ambar' ? '#B0761A' : '#8C1C13');
-              h += '<h2 style="margin-top:18px;font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:#6B7A88">' + 'Evaluación e interpretación interna · No Buró</h2>' +
-                '<div style="margin-top:8px;border:1px solid #D8D2C6;border-radius:9px;overflow:hidden">' +
-                '<div style="display:flex">' +
-                '<div style="background:' + colE + ';color:#fff;padding:14px 10px;text-align:center;min-width:86px">' +
-                '<div style="font-size:28px;font-weight:800;line-height:1">' + ev.puntaje + '</div>' +
-                '<div style="font-size:10px;opacity:.85;margin-top:3px">DE 100</div></div>' +
-                '<div style="padding:12px 14px;flex:1">' +
-                '<b style="color:' + colE + ';font-size:15px">' + esc(ev.nivel) + '</b>' +
-                '<div style="font-size:13px;color:#2C4A63;margin-top:3px">' + esc(ev.recomendacion) + '</div>' +
-                '<div style="font-size:12.5px;color:#6B7A88;margin-top:7px">Ya paga <b style="color:#12263A">' +
-                pesos(ev.compromiso_mensual) + '</b> al mes en ' + ev.creditos_activos + ' crédito(s)</div>' +
-                '</div></div>' +
-                '<div style="display:flex;gap:14px;padding:11px 14px;border-top:1px solid #EDE9E1;font-size:12.5px">' +
-                '<div style="flex:1"><b style="color:#1E6F50;font-size:11px">A FAVOR</b><ul style="margin:4px 0 0;padding-left:16px;color:#2C4A63">' +
-                ev.a_favor.map(function(t){ return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></div>' +
-                '<div style="flex:1"><b style="color:#8C1C13;font-size:11px">EN CONTRA</b><ul style="margin:4px 0 0;padding-left:16px;color:#2C4A63">' +
-                ev.en_contra.map(function(t){ return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></div>' +
-                '</div>' +
-                '<div style="padding:8px 14px;background:#FBFAF7;font-size:11px;color:#6B7A88;border-top:1px solid #EDE9E1">' +
-                'Evaluación interna por reglas. No es score de Buró ni sustituye tu criterio.</div></div>';
-            }
-
             if (r.semaforo){
               h += '<div style="margin-top:14px;padding:13px;border-radius:9px;background:#FBFAF7;border:1px solid #D8D2C6">' +
                 '<b><span class="sem ' + esc(r.semaforo) + '"></span>Sugerencia: ' + esc(r.semaforo.toUpperCase()) + '</b>' +

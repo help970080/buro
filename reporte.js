@@ -8,8 +8,9 @@
 'use strict';
 
 const PDFDocument = require('pdfkit');
-const { monto, entero, fechaBuro, normaliza } = require('./buro');
+const { monto, entero, fechaBuro, normaliza, resumeReporte } = require('./buro');
 const { evalua, capacidad } = require('./evaluacion');
+const { interpretaScore, BANDAS } = require('./razones');
 
 const NEGRO = '#000000';
 const GRIS = '#6B7A88';
@@ -173,6 +174,34 @@ function salto(doc, y, alto, M) {
   return y;
 }
 
+/* Tacómetro semicircular del BC Score (456–760) */
+function tacometro(doc, cx, cy, R, it) {
+  const MIN = 456, MAX = 760;
+  function ang(v) { return Math.PI * (1 - (Math.min(MAX, Math.max(MIN, v)) - MIN) / (MAX - MIN)); }
+  function pt(v, rr) { const t = ang(v); return [cx + rr * Math.cos(t), cy - rr * Math.sin(t)]; }
+  BANDAS.forEach(function (b, i) {
+    const a0 = pt(i === 0 ? MIN : b.min, R), a1 = pt(b.max + (i === BANDAS.length - 1 ? 0 : 1), R);
+    doc.path('M ' + a0[0] + ' ' + a0[1] + ' A ' + R + ' ' + R + ' 0 0 1 ' + a1[0] + ' ' + a1[1])
+      .lineWidth(12).lineCap('butt').strokeColor(b.color).strokeOpacity(it.score === null ? 0.25 : 1).stroke();
+  });
+  doc.strokeOpacity(1);
+  [MIN, 550, 620, 680, 720, MAX].forEach(function (v) {
+    const p1 = pt(v, R + 8), p2 = pt(v, R + 15);
+    doc.font('Helvetica').fontSize(5.2).fillColor(GRIS).text(String(v), p2[0] - 10, p2[1] - 3, { width: 20, align: 'center' });
+    void p1;
+  });
+  if (it.score !== null) {
+    const pn = pt(it.score, R - 10);
+    doc.moveTo(cx, cy).lineTo(pn[0], pn[1]).lineWidth(2.2).lineCap('round').strokeColor('#1F2937').stroke();
+    doc.circle(cx, cy, 4.5).fill('#1F2937');
+    doc.font('Helvetica-Bold').fontSize(20).fillColor(it.color).text(String(it.score), cx - 40, cy - 40, { width: 80, align: 'center' });
+  } else {
+    doc.font('Helvetica-Bold').fontSize(11).fillColor(GRIS).text('SIN SCORE', cx - 40, cy - 30, { width: 80, align: 'center' });
+  }
+  doc.font('Helvetica-Bold').fontSize(7).fillColor(it.color).text(it.banda.toUpperCase(), cx - 60, cy + 9, { width: 120, align: 'center' });
+  doc.font('Helvetica').fontSize(5.6).fillColor(GRIS).text('BC SCORE · BURÓ DE CRÉDITO', cx - 60, cy + 19, { width: 120, align: 'center' });
+}
+
 function generaReportePDF(datos, salida) {
   const doc = new PDFDocument({ size: 'LETTER', margin: 34, bufferPages: true });
   doc.pipe(salida);
@@ -235,79 +264,75 @@ function generaReportePDF(datos, salida) {
     y += 13;
   }
 
-  /* Score */
-  y = barra(doc, 'Score de crédito', y, M, ANCHO);
-  const hayScore = r.score !== null && r.score !== undefined;
-  doc.rect(M, y, 74, 26).lineWidth(0.6).strokeColor(LINEA).stroke();
-  doc.font('Helvetica-Bold').fontSize(hayScore ? 15 : 8)
-    .fillColor(hayScore ? (r.score >= 650 ? VERDE : (r.score >= 600 ? AMBAR : ROJO)) : GRIS)
-    .text(hayScore ? String(r.score) : 'SIN SCORE', M, y + (hayScore ? 6 : 9),
-      { width: 74, align: 'center' });
-  doc.font('Helvetica').fontSize(7).fillColor(NEGRO)
-    .text(hayScore
-      ? 'BC Score. Escala de 456 a 760: a mayor valor, menor probabilidad de incumplimiento.'
-      : (r.score_texto || 'Buró no cuenta con información suficiente para calcular el score.') +
-        ' No significa mal historial: puede ser falta de cuentas recientes.',
-      M + 82, y + 3, { width: ANCHO - 86 });
-  if (r.razones && r.razones.length) {
-    doc.fontSize(6.5).fillColor(GRIS)
-      .text('Claves de razón: ' + r.razones.join(', '), M + 82, y + 17, { width: ANCHO - 86 });
-  }
-  y += 33;
-
-  /* Evaluación interna */
+  /* Score: tacómetro + interpretación de las claves de razón */
   const ev = datos.evaluacion || evalua(datos.payload, r);
-  const colSem = ev.semaforo === 'verde' ? VERDE : (ev.semaforo === 'ambar' ? AMBAR : ROJO);
-  const favor = ev.a_favor.slice(0, 5);
-  const contra = ev.en_contra.slice(0, 5);
-  const filas = Math.max(favor.length, contra.length);
-  const altoEv = Math.max(62, 22 + filas * 11);
-
-  y = salto(doc, y, altoEv + 20, M);
-  y = barra(doc, 'Evaluación e interpretación interna · No Buró', y, M, ANCHO);
-  doc.rect(M, y, ANCHO, altoEv).lineWidth(0.6).strokeColor(LINEA).stroke();
-
-  /* Puntaje */
-  doc.rect(M + 1, y + 1, 84, altoEv - 2).fill(colSem);
-  doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(24)
-    .text(String(ev.puntaje), M + 1, y + altoEv / 2 - 20, { width: 84, align: 'center' });
-  doc.font('Helvetica').fontSize(5.8).text('DE 100 PUNTOS', M + 1, y + altoEv / 2 + 6,
-    { width: 84, align: 'center' });
-
-  doc.font('Helvetica-Bold').fontSize(9.5).fillColor(colSem)
-    .text(ev.nivel, M + 94, y + 6, { width: 236 });
-  doc.font('Helvetica').fontSize(6.8).fillColor(NEGRO)
-    .text(ev.recomendacion, M + 94, y + 19, { width: 236 });
-
-  doc.font('Helvetica-Bold').fontSize(6).fillColor(NEGRO)
-    .text('COMPROMISO MENSUAL ACTUAL', M + 94, y + altoEv - 24);
-  doc.font('Helvetica-Bold').fontSize(11)
-    .text('$' + pesos(ev.compromiso_mensual), M + 94, y + altoEv - 16);
-  doc.font('Helvetica').fontSize(6).fillColor(GRIS)
-    .text('en ' + ev.creditos_activos + ' crédito(s) activo(s)', M + 158, y + altoEv - 12);
-
-  /* Señales, en dos columnas parejas */
-  const xs = M + 336;
-  const anchoCol = (ANCHO - 340) / 2 - 6;
-  let yf = y + 5;
-  doc.font('Helvetica-Bold').fontSize(6).fillColor(VERDE).text('A FAVOR', xs, yf);
-  doc.font('Helvetica-Bold').fontSize(6).fillColor(ROJO)
-    .text('EN CONTRA', xs + anchoCol + 12, yf);
-  yf += 8;
-  favor.forEach(function (t, i) {
-    doc.font('Helvetica').fontSize(5.6).fillColor(NEGRO)
-      .text('• ' + t, xs, yf + i * 11, { width: anchoCol, height: 10, ellipsis: true });
+  const lect = resumeReporte(datos.payload);
+  const it = interpretaScore(Object.assign({}, r, {
+    claves_razon: lect.claves_razon, score_clave: lect.score_clave, origen: lect.origen
+  }), ev);
+  const contra = it.en_contra.slice(0, 4);
+  const extra = it.en_contra_cuentas.slice(0, Math.max(0, 5 - contra.length));
+  const favor = it.a_favor.slice(0, 4);
+  const anchoTxt = ANCHO - 214;
+  doc.font('Helvetica').fontSize(6.6);
+  let altoTxt = 30 + doc.heightOfString(it.resumen, { width: anchoTxt });
+  contra.concat(extra.map(function (t) { return { texto: t }; })).forEach(function (c) {
+    altoTxt += doc.heightOfString(c.texto, { width: anchoTxt - 30 }) + 3;
   });
-  contra.forEach(function (t, i) {
-    doc.font('Helvetica').fontSize(5.6).fillColor(NEGRO)
-      .text('• ' + t, xs + anchoCol + 12, yf + i * 11,
-        { width: anchoCol, height: 10, ellipsis: true });
-  });
-  y += altoEv + 3;
+  altoTxt += (favor.length ? 12 : 0);
+  favor.forEach(function (t) { altoTxt += doc.heightOfString(t, { width: anchoTxt - 12 }) + 2; });
+  if (it.nota) altoTxt += 14;
+  const altoSc = Math.max(124, altoTxt + 22);
 
+  y = salto(doc, y, altoSc + 20, M);
+  y = barra(doc, 'Score de crédito', y, M, ANCHO);
+  doc.rect(M, y, ANCHO, altoSc).lineWidth(0.6).strokeColor(LINEA).stroke();
+  tacometro(doc, M + 100, y + 84, 66, it);
+
+  let yt = y + 8;
+  const xt = M + 208;
+  doc.font('Helvetica-Bold').fontSize(10.5).fillColor(it.color).text(it.banda.toUpperCase(), xt, yt, { width: anchoTxt });
+  yt += 15;
+  doc.font('Helvetica').fontSize(6.6).fillColor(NEGRO).text(it.resumen, xt, yt, { width: anchoTxt });
+  yt = doc.y + 7;
+
+  if (contra.length || extra.length) {
+    doc.font('Helvetica-Bold').fontSize(6.2).fillColor(ROJO).text('POR QUÉ BURÓ LE DA ESTE SCORE (DE MAYOR A MENOR PESO)', xt, yt);
+    yt += 9;
+    contra.forEach(function (c) {
+      const col = c.gravedad >= 3 ? ROJO : (c.gravedad === 2 ? AMBAR : GRIS);
+      doc.roundedRect(xt, yt, 24, 9, 2).fill(col);
+      doc.font('Helvetica-Bold').fontSize(6).fillColor('#FFFFFF').text(c.clave, xt, yt + 1.6, { width: 24, align: 'center' });
+      doc.font('Helvetica').fontSize(6.6).fillColor(NEGRO).text(c.texto, xt + 30, yt + 1, { width: anchoTxt - 30 });
+      yt = Math.max(doc.y, yt + 9) + 3;
+    });
+    extra.forEach(function (t) {
+      doc.font('Helvetica').fontSize(6.6).fillColor(NEGRO).text('•  ' + t, xt + 6, yt, { width: anchoTxt - 30 });
+      yt = doc.y + 3;
+    });
+  }
+  if (favor.length) {
+    yt += 2;
+    doc.font('Helvetica-Bold').fontSize(6.2).fillColor(VERDE).text('A FAVOR', xt, yt);
+    yt += 9;
+    favor.forEach(function (t) {
+      doc.font('Helvetica').fontSize(6.6).fillColor(NEGRO).text('✓  ' .replace('✓', '+') + t, xt + 6, yt, { width: anchoTxt - 12 });
+      yt = doc.y + 2;
+    });
+  }
+  if (it.nota) {
+    doc.font('Helvetica-Oblique').fontSize(6).fillColor(GRIS).text(it.nota, xt, y + altoSc - 12, { width: anchoTxt });
+  }
+  y += altoSc + 3;
+
+  if (!it.solo_score) {
+    doc.font('Helvetica').fontSize(6.4).fillColor(NEGRO)
+      .text('Compromiso mensual actual: $' + pesos(ev.compromiso_mensual) + ' en ' + ev.creditos_activos + ' crédito(s) activo(s).', M, y, { width: ANCHO });
+    y += 10;
+  }
   doc.font('Helvetica').fontSize(5.6).fillColor(GRIS)
-    .text('Evaluación interna de LMV Credia basada en reglas propias para crédito de monto chico. ' +
-      'No es un score de Buró de Crédito ni sustituye el criterio del analista.', M, y, { width: ANCHO });
+    .text('BC Score de Buró de Crédito, escala 456 a 760: a mayor valor, menor probabilidad de incumplimiento. ' +
+      'Las bandas y la interpretación son referencia interna de LMV Credia y no sustituyen el criterio del analista.', M, y, { width: ANCHO });
   y += 14;
 
   /* Domicilios */

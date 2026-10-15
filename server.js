@@ -26,6 +26,7 @@ const { resumeReporte, semaforoSugerido } = require('./buro');
 const { generaPDF, generaHojaBlanco } = require('./comprobante');
 const { generaReportePDF } = require('./reporte');
 const { evalua } = require('./evaluacion');
+const { interpretaScore } = require('./razones');
 
 const app = express();
 app.use(express.json({ limit: '12mb' }));
@@ -812,11 +813,23 @@ app.get('/api/solicitudes/:id', auth, alcance, async (req, res) => {
     const c = await q('SELECT * FROM buro_consultas WHERE solicitud_id=$1 ORDER BY id DESC', [req.params.id]);
     const d = await q('SELECT * FROM buro_dictamenes WHERE solicitud_id=$1 ORDER BY id DESC LIMIT 1', [req.params.id]);
     let consultas = c.rows;
+    /* Interpretación de las claves de razón (se calcula al leer: aplica también a consultas viejas) */
+    consultas.forEach(function (x) {
+      if (x.error || !x.payload) return;
+      try {
+        const lect = resumeReporte(x.payload);
+        x.interpretacion = interpretaScore(Object.assign({}, x.resumen || lect, {
+          score: x.score !== null && x.score !== undefined ? x.score : lect.score,
+          claves_razon: lect.claves_razon, score_clave: lect.score_clave, origen: lect.origen
+        }), x.resumen && x.resumen.evaluacion);
+      } catch (e) { /* opcional */ }
+    });
     if (esGerente(req)) {
       /* Gerente: score y estado de la consulta; sin reporte ni detalle de cuentas */
       consultas = consultas.map(function (x) {
         return { id: x.id, tipo: x.tipo, score: x.score, folio_moffin: x.folio_moffin, error: x.error,
           simulada: x.simulada, consultada: x.consultada, usuario: x.usuario,
+          interpretacion: x.interpretacion ? { score: x.interpretacion.score, banda: x.interpretacion.banda, color: x.interpretacion.color } : null,
           resumen: x.resumen && x.resumen.score_texto ? { score_texto: x.resumen.score_texto } : null };
       });
     }
