@@ -78,7 +78,36 @@
     align-items:flex-start;justify-content:center;padding:24px;overflow-y:auto;z-index:40}
   .capa .caja{background:#fff;border-radius:18px;padding:24px;max-width:680px;width:100%;box-shadow:0 24px 60px rgba(15,23,42,.3)}
   #login{background:linear-gradient(135deg,#1E1B4B 0%,#4338CA 50%,#0EA5A4 120%);backdrop-filter:none}
+  #login{align-items:center;gap:56px;padding:24px 5vw}
   #login .caja{border:1px solid rgba(255,255,255,.4)}
+  #login .acceso{max-width:400px;flex:none;position:relative;z-index:2;animation:sube .6s ease both}
+  .hero{flex:1;max-width:620px;color:#fff;position:relative;min-height:540px;display:flex;align-items:center}
+  .hero-in{position:relative;z-index:2;width:100%}
+  .hero-tag{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+    background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.25);padding:6px 12px;border-radius:30px}
+  .hero-tit{font-size:40px;line-height:1.12;font-weight:800;margin:18px 0 6px;display:block}
+  .hero-tit::before{display:none}
+  .hero-tit span{background:linear-gradient(90deg,#67E8F9,#A7F3D0);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .hero-gauge{width:260px;margin:4px 0 2px;filter:drop-shadow(0 8px 24px rgba(0,0,0,.25))}
+  .aguja{transform-origin:130px 130px;animation:barre 6s ease-in-out infinite}
+  @keyframes barre{0%{transform:rotate(-70deg)}30%{transform:rotate(45deg)}50%{transform:rotate(20deg)}75%{transform:rotate(62deg)}100%{transform:rotate(-70deg)}}
+  .beneficios{list-style:none;margin:8px 0 0;padding:0;position:relative;height:96px}
+  .beneficios li{position:absolute;inset:0;opacity:0;transform:translateY(14px);transition:opacity .6s,transform .6s;
+    background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);border-radius:16px;padding:16px 20px;backdrop-filter:blur(8px)}
+  .beneficios li.ver{opacity:1;transform:none}
+  .beneficios b{display:block;font-size:18px;margin-bottom:4px}
+  .beneficios span{font-size:14.5px;opacity:.9}
+  .puntos{display:flex;gap:7px;margin-top:14px}
+  .puntos i{width:8px;height:8px;border-radius:8px;background:rgba(255,255,255,.35);transition:all .4s}
+  .puntos i.ver{width:26px;background:#67E8F9}
+  .burbuja{position:absolute;border-radius:50%;filter:blur(40px);opacity:.45;animation:flota 14s ease-in-out infinite}
+  .b1{width:260px;height:260px;background:#22D3EE;top:-40px;left:-60px}
+  .b2{width:220px;height:220px;background:#A855F7;bottom:-20px;right:40px;animation-delay:-5s}
+  .b3{width:160px;height:160px;background:#34D399;top:45%;left:45%;animation-delay:-9s}
+  @keyframes flota{0%,100%{transform:translate(0,0)}50%{transform:translate(30px,-25px)}}
+  @keyframes sube{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+  @media(max-width:900px){ .hero{display:none} #login{justify-content:center} }
+  @media(prefers-reduced-motion:reduce){ .aguja,.burbuja,#login .acceso{animation:none} .beneficios li{transition:none} }
   #login h1::before{content:"B";display:inline-grid;place-items:center;width:40px;height:40px;border-radius:11px;margin-right:10px;
     background:linear-gradient(135deg,#4F46E5,#0EA5A4);color:#fff;font-size:20px;vertical-align:-9px}
   .dato{display:flex;justify-content:space-between;gap:14px;padding:9px 0;border-bottom:1px dashed #E5E9F2;font-size:14px}
@@ -120,9 +149,34 @@
 
 <!-- LOGIN -->
 <div id="login" class="capa">
-  <div class="caja" style="max-width:380px;margin-top:8vh">
+  <section class="hero" aria-hidden="true">
+    <div class="burbuja b1"></div><div class="burbuja b2"></div><div class="burbuja b3"></div>
+    <div class="hero-in">
+      <div class="hero-tag">Consulta de historial crediticio</div>
+      <h2 class="hero-tit">Decide en minutos,<br><span>con datos de Buró.</span></h2>
+      <svg class="hero-gauge" viewBox="0 0 260 150">
+        <path d="M38 130 A92 92 0 0 1 72 59" stroke="#EF4444" stroke-width="16" fill="none"/>
+        <path d="M74 57 A92 92 0 0 1 132 38" stroke="#F97316" stroke-width="16" fill="none"/>
+        <path d="M134 38 A92 92 0 0 1 188 57" stroke="#EAB308" stroke-width="16" fill="none"/>
+        <path d="M190 59 A92 92 0 0 1 211 87" stroke="#22C55E" stroke-width="16" fill="none"/>
+        <path d="M212 90 A92 92 0 0 1 222 130" stroke="#16A34A" stroke-width="16" fill="none"/>
+        <g class="aguja"><line x1="130" y1="130" x2="130" y2="56" stroke="#fff" stroke-width="5" stroke-linecap="round"/></g>
+        <circle cx="130" cy="130" r="9" fill="#fff"/>
+      </svg>
+      <ul class="beneficios">
+        <li><b>⚡ Score en minutos</b><span>Consulta directa a Buró de Crédito vía Moffin, sin papeleo.</span></li>
+        <li><b>✍️ Firma desde el celular</b><span>El cliente autoriza con folio y código, o en persona en pantalla.</span></li>
+        <li><b>🧭 Interpretación clara</b><span>Tacómetro, banda de riesgo y las claves de razón traducidas.</span></li>
+        <li><b>🛡️ Sin cobros dobles</b><span>Una sola consulta por cliente; las repetidas se reutilizan gratis.</span></li>
+        <li><b>🏢 Acceso por agencia</b><span>Cada gerente ve y consulta solo lo de su agencia, con tope mensual.</span></li>
+        <li><b>📄 Reporte listo</b><span>PDF para el expediente con score, claves y domicilio.</span></li>
+      </ul>
+      <div class="puntos"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    </div>
+  </section>
+  <div class="caja acceso">
     <h1>Panel de buró</h1>
-    <p style="color:#6B7A88;font-size:14px;margin:0 0 4px">LMV Credia, S.A. de C.V.</p>
+    <p style="color:#64748B;font-size:14px;margin:0 0 4px">Entra con tu usuario.</p>
     <label for="lu">Usuario</label>
     <input id="lu" type="text" autocomplete="username">
     <label for="lp">Contraseña</label>
@@ -330,6 +384,17 @@
     $('app').classList.add('oculto');
   }
   $('salir').addEventListener('click', salir);
+
+  /* Beneficios rotando en el login */
+  (function(){
+    var items = document.querySelectorAll('.beneficios li'), pts = document.querySelectorAll('.puntos i'), k = 0;
+    if (!items.length) return;
+    function muestra(){
+      for (var i = 0; i < items.length; i++){ items[i].classList.toggle('ver', i === k); if (pts[i]) pts[i].classList.toggle('ver', i === k); }
+      k = (k + 1) % items.length;
+    }
+    muestra(); setInterval(muestra, 3200);
+  })();
 
   /* ---- Login ---- */
   $('blogin').addEventListener('click', entrar);
