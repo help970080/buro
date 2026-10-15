@@ -1148,7 +1148,23 @@ async function consultaAutomatica(solicitudId, creador) {
   return consultarMoffin(solicitudId, 'score', { usuario: creador || null });
 }
 
+/* Una sola consulta cobrada por cliente: candado contra clics simultáneos */
+const consultando = new Set();
+
 async function consultarMoffin(solicitudId, tipo, opciones) {
+  const llave = String(solicitudId);
+  if (consultando.has(llave)) {
+    throw Object.assign(new Error('Ya hay una consulta en curso para este cliente. Espera unos segundos y actualiza.'), { http: 409 });
+  }
+  consultando.add(llave);
+  try {
+    return await consultarMoffinUna(solicitudId, tipo, opciones);
+  } finally {
+    consultando.delete(llave);
+  }
+}
+
+async function consultarMoffinUna(solicitudId, tipo, opciones) {
   const op = opciones || {};
   const rs = await q('SELECT * FROM buro_solicitudes WHERE id=$1', [solicitudId]);
   if (!rs.rows.length) throw new Error('No existe esa solicitud.');
@@ -1160,7 +1176,18 @@ async function consultarMoffin(solicitudId, tipo, opciones) {
     throw new Error('La autorización ya venció. Hay que recabarla de nuevo.');
   }
 
-  if (!op.forzar && sol.curp) {
+  /* Si ya existe una consulta exitosa del cliente en la ventana, no se cobra otra */
+  const previa = await q(
+    `SELECT id, tipo, consultada FROM buro_consultas
+     WHERE (solicitud_id=$1 OR (COALESCE($2,'')<>'' AND curp=$2)) AND error IS NULL
+       AND consultada > NOW() - ($3 || ' days')::interval
+     ORDER BY id DESC LIMIT 1`, [solicitudId, sol.curp || '', String(CACHE_DIAS)]);
+  if (previa.rows.length && previa.rows[0].tipo !== tipo) {
+    throw Object.assign(new Error('Este cliente ya tiene una consulta de ' + previa.rows[0].tipo +
+      ' de hace menos de ' + CACHE_DIAS + ' días. No se hace otra para no cobrar doble.'), { http: 409, bloqueada: true });
+  }
+
+  if (sol.curp) {
     const cache = await q(
       `SELECT * FROM buro_consultas
        WHERE curp=$1 AND tipo=$2 AND error IS NULL AND consultada > NOW() - ($3 || ' days')::interval
@@ -1271,12 +1298,11 @@ app.post('/api/solicitudes/:id/consultar', auth, alcance, async (req, res) => {
         requiere_confirmacion: true
       });
     }
-    const out = await consultarMoffin(req.params.id, tipo,
-      { forzar: !esGerente(req) && !!req.body.forzar, usuario: req.user.u });
+    const out = await consultarMoffin(req.params.id, tipo, { usuario: req.user.u });
     if (esGerente(req)) { delete out.resumen; }
     res.json(Object.assign({ ok: true }, out, { cuota: await cuotaMes() }));
   } catch (e) {
-    res.status(502).json({ error: e.message });
+    res.status(e.http === 409 ? 409 : 502).json({ error: e.message, bloqueada: !!e.bloqueada });
   }
 });
 

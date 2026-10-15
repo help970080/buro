@@ -893,10 +893,15 @@
           h += '<div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">' +
             '<button id="d_score">Consultar score</button></div>';
         }
-      } else if (s.estado === 'autorizada' || s.estado === 'error' || (c && c.tipo === 'score')){
-        h += '<div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">' +
-          '<button id="d_score">Consultar score</button>' +
-          '<button class="claro" id="d_reporte">Reporte completo (cuesta más)</button></div>';
+      } else if (!c || c.error){
+        if (s.estado === 'autorizada' || s.estado === 'error'){
+          h += '<div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">' +
+            '<button id="d_score">Consultar score</button>' +
+            '<button class="claro" id="d_reporte">Reporte completo (cuesta más)</button></div>';
+        }
+      } else {
+        h += '<div class="aviso-sim" style="margin-top:14px">Este cliente ya fue consultado. Para no cobrar doble, no se permite otra consulta en ' +
+          '90 días.</div>';
       }
 
       if (d.dictamen){
@@ -1011,7 +1016,7 @@
     api('/api/solicitudes/' + actual + '/consultar', {method:'POST', body:{tipo:tipo, confirmado:confirmado}})
     .then(function(){ cuota(); abre(actual); lista(); })
     .catch(function(e){
-      if (!gerente() && /cuesta más|consultas del mes/i.test(e.message)){
+      if (!gerente() && /cuesta más|consultas del mes/i.test(e.message) && !/cobrar doble/.test(e.message)){
         if (confirm(e.message + '\n\n¿Continuar de todos modos?')) { consulta(tipo, true); return; }
         msg('d_msg','');
         return;
