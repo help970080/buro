@@ -1395,7 +1395,7 @@ async function datosReporte(solicitudId) {
   };
 }
 
-app.get('/api/solicitudes/:id/reporte.pdf', auth, soloAdmin, async (req, res) => {
+app.get('/api/solicitudes/:id/reporte.pdf', auth, alcance, async (req, res) => {
   try {
     const d = await datosReporte(req.params.id);
     if (!d) return res.status(404).json({ error: 'Esta solicitud no tiene consulta registrada.' });

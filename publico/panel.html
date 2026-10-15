@@ -817,6 +817,10 @@
         if (c.error){
           h += '<div class="msg err" style="display:block">' + esc(c.error) + '</div>';
         } else {
+          if (gerente()){
+            /* Gerente: solo el reporte, sin datos técnicos */
+            h += '<button id="d_reppdf" style="width:100%;margin-top:6px;padding:15px">Descargar reporte de crédito (PDF)</button>';
+          } else {
           if (c.interpretacion) h += tacometro(c.interpretacion);
           var itp = c.interpretacion;
           if (itp && itp.resumen){
@@ -910,10 +914,11 @@
                    esc(r.alertas.map(function(a){ return a.clave + ' ' + a.mensaje; }).join(' | ')) + '</div>';
             }
           }
+          }
         }
       }
 
-      h += '<div id="d_revision"></div>';
+      if (!(gerente() && c && !c.error)) h += '<div id="d_revision"></div>';
 
       if (gerente()){
         if (s.estado === 'autorizada' || s.estado === 'error'){
