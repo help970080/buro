@@ -424,10 +424,12 @@
     $('login').classList.add('oculto');
     $('cab').classList.remove('oculto');
     $('app').classList.remove('oculto');
-    cuota().then(function(){ aplicaRol(); lista(); });
+    var listo = cuota().then(function(){ aplicaRol(); lista(); });
     fetch('/api/health').then(function(r){ return r.json(); }).then(function(h){
       if (h.mock) $('avisoSim').classList.remove('oculto');
     }).catch(function(){});
+
+    return listo;
   }
 
   function cuota(){
@@ -1388,7 +1390,36 @@
     }).catch(function(e){ $('bitUsu').innerHTML = '<div class="vacio">' + esc(e.message) + '</div>'; });
   }
 
-  if (tok) arranca();
+  /* Llega desde CobraPro con un pase de un solo uso (#pase=...). Se canjea, se borra de la URL y,
+     si trae la captura del cliente, se prellena "Nueva solicitud" (incluida la foto de la INE). */
+  function prellena(p){
+    if (!p) return;
+    var put = function(id, v){ var e = $(id); if (e && v != null && v !== '') e.value = v; };
+    put('n_tel', String(p.telefono || '').replace(/\D/g,'').slice(-10));
+    put('n_nombre', p.nombre); put('n_ap', p.apellido_p); put('n_am', p.apellido_m);
+    put('n_curp', p.curp); put('n_nac', p.fecha_nac); put('n_cp', p.cp);
+    put('n_calle', p.calle); put('n_col', p.colonia); put('n_mun', p.municipio);
+    if (p.estado_dom){
+      var nrm = function(x){ return String(x||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().trim(); };
+      var sel = $('n_edo'), obj = nrm(p.estado_dom);
+      for (var i = 0; i < sel.options.length; i++){ if (nrm(sel.options[i].text) === obj || nrm(sel.options[i].value) === obj){ sel.selectedIndex = i; break; } }
+    }
+    if (p.ine && /^data:image\//.test(p.ine)) ineCreacion = p.ine;
+    try { calculaRFCPanel(); } catch(e){}
+    msg('mnueva', 'Datos traídos de CobraPro' + (ineCreacion ? ' (con foto de la INE)' : '') + '. Revísalos y completa lo que falte antes de crear.', 'ok');
+    var t = $('n_tel'); if (t && t.scrollIntoView) t.scrollIntoView({behavior:'smooth', block:'center'});
+  }
+  var pase = (location.hash.match(/pase=([\w-]+)/) || [])[1];
+  if (pase){
+    history.replaceState(null, '', location.pathname);
+    fetch('/api/sso/canjear', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({pase: pase})})
+    .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
+    .then(function(o){
+      if (!o.ok){ msg('mlogin', o.j.error || 'El acceso desde CobraPro venció.', 'err'); if (tok) arranca(); return; }
+      tok = o.j.token; localStorage.setItem('buro_token', tok);
+      arranca().then(function(){ prellena(o.j.pre); });
+    }).catch(function(){ msg('mlogin','No hay conexión con el servidor.','err'); });
+  } else if (tok) arranca();
 })();
 </script>
 </body>

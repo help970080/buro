@@ -444,6 +444,64 @@ function datosRol(b) {
   return { rol, agencia: rol === 'gerente' ? agencia : (agencia || null), tope };
 }
 
+/* ---------- Acceso desde CobraPro (pase de un solo uso) ----------
+   CobraPro (servidor a servidor) pide un pase firmado con BURO_SSO_SECRET. Aquí se crea o actualiza el
+   usuario como GERENTE de esa agencia (tope 50 al crearlo; luego el admin lo ajusta en Usuarios) y se
+   guarda, si viene, la captura del cliente para prellenar "Nueva solicitud". El navegador canjea el
+   pase una sola vez dentro de 2 minutos; nunca viaja un token ni datos del cliente en la URL. */
+const SSO_SECRET = process.env.BURO_SSO_SECRET || '';
+const SSO_TOPE = parseInt(process.env.BURO_SSO_TOPE || '50', 10) || 50;
+const PASES = new Map();
+function ssoFirmaOk(payload, ts, firma) {
+  if (!SSO_SECRET || !payload || !firma) return false;
+  if (!(Math.abs(Date.now() - (+ts || 0)) < 120000)) return false;
+  const calc = crypto.createHmac('sha256', SSO_SECRET).update(String(ts) + '.' + payload).digest('hex');
+  return calc.length === String(firma).length && crypto.timingSafeEqual(Buffer.from(calc), Buffer.from(String(firma)));
+}
+app.post('/api/sso/pase', async (req, res) => {
+  try {
+    if (!SSO_SECRET) return res.status(503).json({ error: 'Falta BURO_SSO_SECRET en Render (buró).' });
+    const payload = String((req.body && req.body.payload) || '');
+    if (!ssoFirmaOk(payload, req.headers['x-ts'], req.headers['x-firma'])) return res.status(401).json({ error: 'Firma inválida.' });
+    const p = JSON.parse(payload);
+    const agencia = String(p.agencia || '').trim().slice(0, 120);
+    const usuario = String(p.usuario || '').toLowerCase().replace(/[^a-z0-9:_-]/g, '').slice(0, 60);
+    if (!agencia || !usuario) return res.status(400).json({ error: 'Falta agencia o usuario.' });
+    const nombre = String(p.nombre || usuario).slice(0, 90);
+    const ex = await q('SELECT activo FROM buro_usuarios WHERE usuario=$1', [usuario]);
+    if (!ex.rows.length) {
+      await q('INSERT INTO buro_usuarios(usuario, pass, nombre, rol, agencia, tope_mes) VALUES ($1,$2,$3,$4,$5,$6)',
+        [usuario, hashPass(crypto.randomBytes(24).toString('hex')), nombre, 'gerente', agencia, SSO_TOPE]);
+    } else {
+      if (!ex.rows[0].activo) return res.status(403).json({ error: 'Tu acceso a buró fue desactivado. Habla con el administrador.' });
+      await q('UPDATE buro_usuarios SET nombre=$1, agencia=$2 WHERE usuario=$3', [nombre, agencia, usuario]);
+    }
+    const ahora = Date.now();
+    for (const [k, v] of PASES) if (v.exp < ahora) PASES.delete(k);
+    const id = crypto.randomBytes(18).toString('base64url');
+    PASES.set(id, { usuario, exp: ahora + 120000, pre: p.pre && typeof p.pre === 'object' ? p.pre : null });
+    res.json({ pase: id });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+app.post('/api/sso/canjear', async (req, res) => {
+  try {
+    const id = String((req.body && req.body.pase) || '');
+    const p = PASES.get(id);
+    PASES.delete(id);
+    if (!p || p.exp < Date.now()) return res.status(401).json({ error: 'El acceso desde CobraPro venció. Vuelve a abrirlo desde CobraPro.' });
+    const r = await q('SELECT * FROM buro_usuarios WHERE usuario=$1 AND activo=TRUE', [p.usuario]);
+    if (!r.rows.length) return res.status(403).json({ error: 'Tu acceso a buró fue desactivado.' });
+    const u = r.rows[0];
+    q('UPDATE buro_usuarios SET ultimo_acceso=NOW() WHERE id=$1', [u.id]).catch(() => {});
+    res.json({ token: firmaJWT({ t: 'equipo', u: u.usuario, n: u.nombre }, 12), nombre: u.nombre, usuario: u.usuario,
+      rol: u.rol || 'admin', agencia: u.agencia || '', pre: p.pre });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/usuarios', auth, soloAdmin, async (req, res) => {
   try {
     const usuario = (req.body.usuario || '').toLowerCase().trim();
