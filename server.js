@@ -25,6 +25,7 @@ const { calculaRFC, verificaRFC } = require('./rfc');
 const { resumeReporte, semaforoSugerido } = require('./buro');
 const { generaPDF, generaHojaBlanco } = require('./comprobante');
 const { generaReportePDF } = require('./reporte');
+const { generaReporteCredia } = require('./reporte_credia');
 const { evalua } = require('./evaluacion');
 const { interpretaScore } = require('./razones');
 const { cotejo } = require('./cotejo');
@@ -1288,6 +1289,19 @@ async function llamaMoffin(sol, tipo) {
 
 /* Consulta automática al firmar. Se atribuye a quien creó la solicitud;
    si es gerente y ya no tiene tope o cuota, se queda en 'autorizada' para el administrador. */
+/* ---------- Modo REPORTE (LMV CREDIA y el usuario legaxia) ----------
+   Estas solicitudes se consultan con el REPORTE DETALLADO de Moffin (bureau_pf) y NUNCA con score:
+   una sola consulta cobrada por cliente. Su PDF usa reporte_credia.js (sin sección de score).
+   Agencias/usuarios configurables con BURO_REPORTE_AGENCIAS y BURO_REPORTE_USUARIOS (separados por coma). */
+const REP_AGENCIAS = (process.env.BURO_REPORTE_AGENCIAS || 'CREDIA').split(',').map(x => x.trim().toUpperCase()).filter(Boolean);
+const REP_USUARIOS = (process.env.BURO_REPORTE_USUARIOS || 'legaxia').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
+function modoReporte(sol) {
+  if (!sol) return false;
+  const ag = normAg(sol.agencia);
+  if (ag && REP_AGENCIAS.some(a => ag.includes(a))) return true;
+  return REP_USUARIOS.includes(String(sol.creada_por || '').toLowerCase());
+}
+
 async function consultaAutomatica(solicitudId, creador) {
   if (docsListo() && !(await tieneINE(solicitudId))) {
     console.log('Consulta automática en espera: falta INE', solicitudId);
@@ -1303,7 +1317,9 @@ async function consultaAutomatica(solicitudId, creador) {
       }
     }
   }
-  return consultarMoffin(solicitudId, 'score', { usuario: creador || null });
+  const so = await q('SELECT agencia, creada_por FROM buro_solicitudes WHERE id=$1', [solicitudId]);
+  const tipo = modoReporte(so.rows[0]) ? 'reporte' : 'score';
+  return consultarMoffin(solicitudId, tipo, { usuario: creador || null });
 }
 
 /* Una sola consulta cobrada por cliente: candado contra clics simultáneos */
@@ -1422,9 +1438,11 @@ app.get('/api/solicitudes/:id/revisar', auth, alcance, async (req, res) => {
 
 app.post('/api/solicitudes/:id/consultar', auth, alcance, async (req, res) => {
   try {
-    const tipo = req.body.tipo === 'reporte' ? 'reporte' : 'score';
+    let tipo = req.body.tipo === 'reporte' ? 'reporte' : 'score';
     const sr = await q('SELECT * FROM buro_solicitudes WHERE id=$1', [req.params.id]);
     if (!sr.rows.length) return res.status(404).json({ error: 'No existe esa solicitud.' });
+    const soloReporte = modoReporte(sr.rows[0]);
+    if (soloReporte) tipo = 'reporte';   // CREDIA / legaxia: nunca score, para no cobrar doble
     const faltan = revisaDatos(sr.rows[0]).filter(f =>
       tipo === 'reporte' || f.indexOf('apellido materno') < 0);
     if (faltan.length) {
@@ -1438,7 +1456,7 @@ app.post('/api/solicitudes/:id/consultar', auth, alcance, async (req, res) => {
     }
     const c = await cuotaMes();
     if (esGerente(req)) {
-      if (tipo !== 'score') return res.status(403).json({ error: 'El gerente solo puede consultar score.' });
+      if (tipo !== 'score' && !soloReporte) return res.status(403).json({ error: 'El gerente solo puede consultar score.' });
       if (c.restantes <= 0) {
         return res.status(403).json({ error: 'Se agotaron las consultas del mes. Pide al administrador que la haga.' });
       }
@@ -1453,7 +1471,7 @@ app.post('/api/solicitudes/:id/consultar', auth, alcance, async (req, res) => {
         requiere_confirmacion: true, cuota: c
       });
     }
-    if (tipo === 'reporte' && !req.body.confirmado) {
+    if (tipo === 'reporte' && !soloReporte && !req.body.confirmado) {
       return res.status(409).json({
         error: 'El reporte completo cuesta más que el score. Confirma para continuar.',
         requiere_confirmacion: true
@@ -1553,7 +1571,7 @@ app.get('/api/solicitudes/:id/reporte.pdf', auth, alcance, async (req, res) => {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition',
       'inline; filename="reporte-' + (d.solicitud.folio || req.params.id) + '.pdf"');
-    generaReportePDF(d, res);
+    if (modoReporte(d.solicitud)) generaReporteCredia(d, res); else generaReportePDF(d, res);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
