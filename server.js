@@ -1814,10 +1814,11 @@ app.get('/api/health', async (req, res) => {
 });
 
 /* ---------- Páginas ---------- */
-app.use(express.static(path.join(__dirname, 'publico')));
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'publico', 'cliente.html')));
-app.get('/panel', (req, res) => res.sendFile(path.join(__dirname, 'publico', 'panel.html')));
-app.get('/r/:token', (req, res) => res.sendFile(path.join(__dirname, 'publico', 'entrega.html')));
+/* Las páginas se revalidan siempre: si no, el navegador sigue mostrando una versión vieja del panel después de un deploy. */
+app.use(express.static(path.join(__dirname, 'publico'), { setHeaders: (res, f) => { if (/\.html$/.test(f)) res.setHeader('Cache-Control', 'no-cache'); } }));
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'publico', 'cliente.html'), { headers: { 'Cache-Control': 'no-cache' } }));
+app.get('/panel', (req, res) => res.sendFile(path.join(__dirname, 'publico', 'panel.html'), { headers: { 'Cache-Control': 'no-cache' } }));
+app.get('/r/:token', (req, res) => res.sendFile(path.join(__dirname, 'publico', 'entrega.html'), { headers: { 'Cache-Control': 'no-cache' } }));
 
 /* ---------- Guardianes ---------- */
 process.on('uncaughtException', e => console.error('uncaught:', e.message));
