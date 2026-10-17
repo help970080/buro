@@ -1005,6 +1005,7 @@ app.get('/api/solicitudes/:id', auth, alcance, async (req, res) => {
       autorizaciones: a.rows,
       consultas: consultas,
       dictamen: d.rows[0] || null,
+      modo_reporte: soloReportePara(s.rows[0], req.user.u),
       tiene_ine: await tieneINE(req.params.id),
       docs: docsListo(),
       rol: req.user.rol
@@ -1297,6 +1298,10 @@ async function llamaMoffin(sol, tipo) {
     if (r.status === 400 && data.message) msg = 'Datos rechazados: ' + String(data.message).slice(0, 300);
     else if (r.status === 401) msg = 'La llave de Moffin no es válida o venció.';
     else if (r.status === 429) msg = 'Se alcanzó el límite de consultas de la cuenta Moffin.';
+    else if (/no credentials/i.test(String(data.message || txt))) msg = (tipo === 'reporte'
+      ? 'Moffin no tiene activas las credenciales de Buró para el reporte completo (bureau_pf).'
+      : 'Moffin no tiene activas las credenciales de Buró para el score (prospector_pf).') +
+      ' No se cobró. Hay que pedir a Moffin que las revise.';
     else if (r.status === 502 || r.status === 504) msg = 'Moffin no respondió a tiempo. Vuelve a intentar.';
     else if (data.message) msg += ': ' + String(data.message).slice(0, 250);
     const err = new Error(msg);
@@ -1326,7 +1331,12 @@ async function llamaMoffin(sol, tipo) {
    una sola consulta cobrada por cliente. Su PDF usa reporte_credia.js (sin sección de score).
    Agencias/usuarios configurables con BURO_REPORTE_AGENCIAS y BURO_REPORTE_USUARIOS (separados por coma). */
 const REP_AGENCIAS = (process.env.BURO_REPORTE_AGENCIAS || 'CREDIA').split(',').map(x => x.trim().toUpperCase()).filter(Boolean);
-const REP_USUARIOS = (process.env.BURO_REPORTE_USUARIOS || 'legaxia').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
+const REP_USUARIOS = (process.env.BURO_REPORTE_USUARIOS || '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
+/* Usuarios que eligen score o reporte aunque la solicitud sea de CREDIA */
+const LIBRES = (process.env.BURO_LIBRE_USUARIOS || 'legaxia').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
+function soloReportePara(sol, usuario) {
+  return modoReporte(sol) && !LIBRES.includes(String(usuario || '').toLowerCase());
+}
 function modoReporte(sol) {
   if (!sol) return false;
   const ag = normAg(sol.agencia);
@@ -1348,6 +1358,10 @@ async function consultaAutomatica(solicitudId, creador) {
         return;
       }
     }
+  }
+  if (LIBRES.includes(String(creador || '').toLowerCase())) {
+    console.log('Consulta automática omitida: el usuario elige score o reporte', creador, solicitudId);
+    return;
   }
   const so = await q('SELECT agencia, creada_por FROM buro_solicitudes WHERE id=$1', [solicitudId]);
   const tipo = modoReporte(so.rows[0]) ? 'reporte' : 'score';
@@ -1473,8 +1487,8 @@ app.post('/api/solicitudes/:id/consultar', auth, alcance, async (req, res) => {
     let tipo = req.body.tipo === 'reporte' ? 'reporte' : 'score';
     const sr = await q('SELECT * FROM buro_solicitudes WHERE id=$1', [req.params.id]);
     if (!sr.rows.length) return res.status(404).json({ error: 'No existe esa solicitud.' });
-    const soloReporte = modoReporte(sr.rows[0]);
-    if (soloReporte) tipo = 'reporte';   // CREDIA / legaxia: nunca score, para no cobrar doble
+    const soloReporte = soloReportePara(sr.rows[0], req.user.u);
+    if (soloReporte) tipo = 'reporte';   // CREDIA: nunca score, para no cobrar doble (legaxia elige)
     const faltan = revisaDatos(sr.rows[0]).filter(f =>
       tipo === 'reporte' || f.indexOf('apellido materno') < 0);
     if (faltan.length) {
@@ -1592,7 +1606,8 @@ async function datosReporte(solicitudId) {
     evaluacion: (res && res.evaluacion) || null,
     solicitud: s.rows[0],
     consultada: c.rows[0].consultada,
-    folio_bc: c.rows[0].folio_moffin
+    folio_bc: c.rows[0].folio_moffin,
+    tipo: c.rows[0].tipo
   };
 }
 
@@ -1603,7 +1618,7 @@ app.get('/api/solicitudes/:id/reporte.pdf', auth, alcance, async (req, res) => {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition',
       'inline; filename="reporte-' + (d.solicitud.folio || req.params.id) + '.pdf"');
-    if (modoReporte(d.solicitud)) generaReporteCredia(d, res); else generaReportePDF(d, res);
+    if (d.tipo === 'reporte' && modoReporte(d.solicitud)) generaReporteCredia(d, res); else generaReportePDF(d, res);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
