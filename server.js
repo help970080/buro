@@ -433,14 +433,29 @@ async function usadasUsuario(usuario) {
   return r.rows[0].n;
 }
 
+/* Freno de fuerza bruta: por usuario (sin importar IP, que se puede falsificar) y por IP. */
+const FALLOS = new Map(); const FALLO_VENTANA = 15 * 60000;
+function falloBloqueado(k, max) { const x = FALLOS.get(k); return !!(x && Date.now() - x.desde < FALLO_VENTANA && x.n >= max); }
+function falloAnota(k) {
+  const x = FALLOS.get(k), t = Date.now();
+  if (!x || t - x.desde > FALLO_VENTANA) FALLOS.set(k, { n: 1, desde: t }); else x.n++;
+  while (FALLOS.size > 10000) FALLOS.delete(FALLOS.keys().next().value);
+}
+function ipDe(req) { return String(req.headers['cf-connecting-ip'] || (req.headers['x-forwarded-for'] || '').split(',')[0] || req.ip || '').trim(); }
+setInterval(() => { const t = Date.now(); for (const [k, x] of FALLOS) if (t - x.desde > FALLO_VENTANA) FALLOS.delete(k); }, 10 * 60000).unref();
+
 app.post('/api/login', async (req, res) => {
   try {
     const usuario = (req.body.usuario || '').toLowerCase().trim();
     const pass = req.body.pass || '';
+    const kU = 'u:' + usuario, kI = 'ip:' + ipDe(req);
+    if (falloBloqueado(kU, 10) || falloBloqueado(kI, 30)) return res.status(429).json({ error: 'Demasiados intentos. Espera 15 minutos.' });
     const r = await q('SELECT * FROM buro_usuarios WHERE usuario=$1 AND activo=TRUE', [usuario]);
     if (!r.rows.length || !verificaPass(pass, r.rows[0].pass)) {
+      falloAnota(kU); falloAnota(kI);
       return res.status(401).json({ error: 'Usuario o contraseña incorrectos.' });
     }
+    FALLOS.delete(kU);
     const u = r.rows[0];
     q('UPDATE buro_usuarios SET ultimo_acceso=NOW() WHERE id=$1', [u.id]).catch(() => {});
     res.json({ token: firmaJWT({ t: 'equipo', u: u.usuario, n: u.nombre }, 12), nombre: u.nombre, usuario: u.usuario,
@@ -478,10 +493,22 @@ app.post('/api/sso/pase', async (req, res) => {
     const payload = String((req.body && req.body.payload) || '');
     if (!ssoFirmaOk(payload, req.headers['x-ts'], req.headers['x-firma'])) return res.status(401).json({ error: 'Firma inválida.' });
     const p = JSON.parse(payload);
-    const agencia = String(p.agencia || '').trim().slice(0, 120);
+    let agencia = String(p.agencia || '').trim().slice(0, 120);
     const usuario = String(p.usuario || '').toLowerCase().replace(/[^a-z0-9:_-]/g, '').slice(0, 60);
     if (!agencia || !usuario) return res.status(400).json({ error: 'Falta agencia o usuario.' });
     const nombre = String(p.nombre || usuario).slice(0, 90);
+    /* La agencia viene del NOMBRE de marca de CobraPro, que el admin de cada agencia puede editar.
+       Renombrándose como otra agencia entraba como gerente de ella y veía sus reportes. Ahora el nombre
+       queda ligado a la agencia de CobraPro (prefijo cpN-) la primera vez y ya no se puede tomar uno ajeno. */
+    const pref = (/^(cp\d+-)/.exec(usuario) || [])[1];
+    if (!pref) return res.status(400).json({ error: 'Usuario de CobraPro no válido.' });
+    const mios = await q("SELECT agencia FROM buro_usuarios WHERE usuario LIKE $1 AND agencia IS NOT NULL AND TRIM(agencia)<>'' ORDER BY id LIMIT 1", [pref + '%']);
+    if (mios.rows.length) {
+      agencia = mios.rows[0].agencia;
+    } else {
+      const ajena = await q("SELECT 1 FROM buro_usuarios WHERE UPPER(TRIM(agencia))=$1 AND usuario NOT LIKE $2 LIMIT 1", [normAg(agencia), pref + '%']);
+      if (ajena.rows.length) return res.status(409).json({ error: 'Ese nombre de agencia ya está registrado en buró. Habla con el administrador.' });
+    }
     const ex = await q('SELECT activo FROM buro_usuarios WHERE usuario=$1', [usuario]);
     if (!ex.rows.length) {
       await q('INSERT INTO buro_usuarios(usuario, pass, nombre, rol, agencia, tope_mes) VALUES ($1,$2,$3,$4,$5,$6)',
@@ -1030,8 +1057,12 @@ app.post('/api/acceso', async (req, res) => {
   try {
     const folio = (req.body.folio || '').replace(/\D/g, '');
     const codigo = (req.body.codigo || '').replace(/\D/g, '');
+    /* Los 404 no contaban: se podían barrer los 1,000,000 de folios para hallar los abiertos. */
+    if (falloBloqueado('acceso:ip:' + ipDe(req), 20) || falloBloqueado('acceso:global', 300)) {
+      return res.status(429).json({ error: 'Demasiados intentos. Espera unos minutos e intenta de nuevo.' });
+    }
     const r = await q('SELECT * FROM buro_solicitudes WHERE folio=$1', [folio]);
-    if (!r.rows.length) return res.status(404).json({ error: 'No encontramos ese folio. Verifícalo con quien te atendió.' });
+    if (!r.rows.length) { falloAnota('acceso:ip:' + ipDe(req)); falloAnota('acceso:global'); return res.status(404).json({ error: 'No encontramos ese folio. Verifícalo con quien te atendió.' }); }
     const s = r.rows[0];
     if (s.exp_acceso && new Date(s.exp_acceso) < new Date()) {
       return res.status(410).json({ error: 'Este folio ya venció. Pide uno nuevo a quien te atendió.' });
@@ -1043,6 +1074,7 @@ app.post('/api/acceso', async (req, res) => {
       return res.status(429).json({ error: 'Demasiados intentos. Pide un código nuevo a quien te atendió.' });
     }
     if (s.codigo !== codigo) {
+      falloAnota('acceso:ip:' + ipDe(req)); falloAnota('acceso:global');
       await q('UPDATE buro_solicitudes SET intentos=intentos+1 WHERE id=$1', [s.id]);
       return res.status(401).json({ error: 'El código no coincide. Revísalo e intenta de nuevo.' });
     }
