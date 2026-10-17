@@ -1297,6 +1297,9 @@ async function llamaMoffin(sol, tipo) {
     if (r.status === 400 && data.message) msg = 'Datos rechazados: ' + String(data.message).slice(0, 300);
     else if (r.status === 401) msg = 'La llave de Moffin no es válida o venció.';
     else if (r.status === 429) msg = 'Se alcanzó el límite de consultas de la cuenta Moffin.';
+    else if (/no credentials/i.test(String(data.message || txt))) msg = tipo === 'reporte'
+      ? 'Tu cuenta de Moffin no tiene habilitado el reporte completo (bureau_pf). Consulta con score o pide a Moffin que lo active. No se cobró.'
+      : 'Tu cuenta de Moffin no tiene habilitado el score (prospector_pf). No se cobró.';
     else if (r.status === 502 || r.status === 504) msg = 'Moffin no respondió a tiempo. Vuelve a intentar.';
     else if (data.message) msg += ': ' + String(data.message).slice(0, 250);
     const err = new Error(msg);
@@ -1324,9 +1327,10 @@ async function llamaMoffin(sol, tipo) {
 /* ---------- Modo REPORTE (LMV CREDIA y el usuario legaxia) ----------
    Estas solicitudes se consultan con el REPORTE DETALLADO de Moffin (bureau_pf) y NUNCA con score:
    una sola consulta cobrada por cliente. Su PDF usa reporte_credia.js (sin sección de score).
-   Agencias/usuarios configurables con BURO_REPORTE_AGENCIAS y BURO_REPORTE_USUARIOS (separados por coma). */
-const REP_AGENCIAS = (process.env.BURO_REPORTE_AGENCIAS || 'CREDIA').split(',').map(x => x.trim().toUpperCase()).filter(Boolean);
-const REP_USUARIOS = (process.env.BURO_REPORTE_USUARIOS || 'legaxia').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
+   Agencias/usuarios configurables con BURO_REPORTE_AGENCIAS y BURO_REPORTE_USUARIOS (separados por coma).
+   APAGADO por defecto: la cuenta de Moffin debe tener habilitado bureau_pf antes de activarlo. */
+const REP_AGENCIAS = (process.env.BURO_REPORTE_AGENCIAS || '').split(',').map(x => x.trim().toUpperCase()).filter(Boolean);
+const REP_USUARIOS = (process.env.BURO_REPORTE_USUARIOS || '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
 function modoReporte(sol) {
   if (!sol) return false;
   const ag = normAg(sol.agencia);
