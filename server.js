@@ -884,6 +884,25 @@ app.post('/api/solicitudes', auth, async (req, res) => {
 });
 
 /* Lo mínimo que Buró pide para consultar (el apellido materno solo lo exige el reporte) */
+/* CURP mal leída de la INE (una letra de más o de menos) hace que Moffin rechace con
+   "PF validation Error" sin decir qué campo. Se revisa aquí, con un mensaje que diga
+   qué está mal, antes de gastar una consulta. Vacía se permite: Buró no la exige. */
+const PARTICULAS = ['DE', 'DEL', 'LA', 'LAS', 'LOS', 'Y', 'MC', 'MAC', 'VAN', 'VON', 'DA', 'DI', 'DAS', 'DER'];
+function revisaCurp(b) {
+  const c = String(b.curp || '').toUpperCase().replace(/\s+/g, '');
+  if (!c) return '';
+  if (c.length !== 18) return 'CURP: tiene ' + c.length + ' caracteres y deben ser 18 (revísala contra la INE)';
+  if (!CURP_RE.test(c)) return 'CURP: el formato no es válido (revisa letra por letra contra la INE)';
+  const f = String(b.fecha_nac || '');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(f) && c.slice(4, 10) !== f.slice(2, 4) + f.slice(5, 7) + f.slice(8, 10)) {
+    return 'CURP: la fecha que trae (' + c.slice(8, 10) + '/' + c.slice(6, 8) + '/' + c.slice(4, 6) + ') no coincide con la fecha de nacimiento';
+  }
+  const ap = normNombre(b.apellido_p).replace(/Ñ/g, 'X').split(' ').filter(w => w && PARTICULAS.indexOf(w) < 0)[0] || '';
+  // La Ñ se escribe X en la CURP; normNombre ya la volvió N, así que N acepta también X.
+  if (ap && ap[0] !== c[0] && !(ap[0] === 'N' && c[0] === 'X')) return 'CURP: debe empezar con la inicial del apellido paterno (' + ap[0] + ')';
+  return '';
+}
+
 function faltanCaptura(b) {
   const f = [];
   if (!normNombre(b.nombre)) f.push('nombre');
@@ -895,6 +914,8 @@ function faltanCaptura(b) {
   if (!String(b.municipio || '').trim()) f.push('municipio');
   if (!claveEstado(b.estado_dom)) f.push('estado');
   if (String(b.cp || '').replace(/\D/g, '').length !== 5) f.push('código postal');
+  const mc = revisaCurp(b);
+  if (mc) f.push(mc);
   return f;
 }
 
@@ -1246,6 +1267,8 @@ async function llamaMoffin(sol, tipo) {
       folio_moffin: 'SIM-' + Date.now()
     };
   }
+  const mcurp = revisaCurp(sol);
+  if (mcurp) { const e = new Error(mcurp + '. Corrígela en "Editar / completar datos".'); e.datos = true; throw e; }
   const edo = claveEstado(sol.estado_dom);
   if (!edo) {
     const e = new Error('El estado "' + (sol.estado_dom || '(vacío)') +
@@ -1304,6 +1327,8 @@ async function llamaMoffin(sol, tipo) {
       ' No se cobró. Hay que pedir a Moffin que las revise.';
     else if (r.status === 502 || r.status === 504) msg = 'Moffin no respondió a tiempo. Vuelve a intentar.';
     else if (data.message) msg += ': ' + String(data.message).slice(0, 250);
+    if (/validation/i.test(String(data.message || txt))) msg += ' — Buró rechazó algún dato. Revisa CURP, RFC, fecha de nacimiento y código postal contra la INE.';
+    if (data.errors || data.details) msg += ' Detalle: ' + JSON.stringify(data.errors || data.details).slice(0, 300);
     const err = new Error(msg);
     err.http = r.status;
     throw err;
@@ -1464,6 +1489,8 @@ function revisaDatos(sol) {
   if (!claveEstado(sol.estado_dom)) faltan.push('estado (no se reconoce "' + (sol.estado_dom || '') + '")');
   const cp = (sol.cp || '').replace(/\D/g, '');
   if (cp.length !== 5) faltan.push('código postal de 5 dígitos');
+  const mc = revisaCurp(sol);
+  if (mc) faltan.push(mc);
   return faltan;
 }
 
