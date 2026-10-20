@@ -526,6 +526,33 @@ app.post('/api/sso/pase', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+/* CobraPro pregunta qué clientes de su agencia ya se consultaron, para marcarlos con Ⓑ.
+   Solo identificadores y fecha: el score y el dictamen nunca salen del buró.
+   La agencia NO se toma del payload: es la ligada al prefijo cpN- de esa agencia de CobraPro. */
+app.post('/api/sso/consultados', async (req, res) => {
+  try {
+    if (!SSO_SECRET) return res.status(503).json({ error: 'Falta BURO_SSO_SECRET en Render (buró).' });
+    const payload = String((req.body && req.body.payload) || '');
+    if (!ssoFirmaOk(payload, req.headers['x-ts'], req.headers['x-firma'])) return res.status(401).json({ error: 'Firma inválida.' });
+    const p = JSON.parse(payload);
+    const pref = (/^(cp\d+-)/.exec(String(p.usuario || '').toLowerCase()) || [])[1];
+    if (!pref) return res.status(400).json({ error: 'Usuario de CobraPro no válido.' });
+    const ag = await q("SELECT agencia FROM buro_usuarios WHERE usuario LIKE $1 AND agencia IS NOT NULL AND TRIM(agencia)<>'' ORDER BY id LIMIT 1", [pref + '%']);
+    if (!ag.rows.length) return res.json({ items: [] });
+    const r = await q(
+      `SELECT s.curp, s.telefono, s.nombre, s.apellido_p, s.apellido_m, MAX(c.consultada) AS fecha
+       FROM buro_solicitudes s JOIN buro_consultas c ON c.solicitud_id = s.id AND c.error IS NULL
+       WHERE UPPER(TRIM(s.agencia)) = $1 GROUP BY s.id`, [normAg(ag.rows[0].agencia)]);
+    res.json({ items: r.rows.map(function (x) {
+      return { curp: String(x.curp || '').toUpperCase().trim(), tel: String(x.telefono || '').replace(/\D/g, '').slice(-10),
+        nombre: [x.nombre, x.apellido_p, x.apellido_m].filter(Boolean).join(' '),
+        fecha: x.fecha ? new Date(x.fecha).toISOString().slice(0, 10) : '' };
+    }) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/sso/canjear', async (req, res) => {
   try {
     const id = String((req.body && req.body.pase) || '');
