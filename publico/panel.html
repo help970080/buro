@@ -1073,6 +1073,24 @@
       var faltaIne = d.docs && !d.tiene_ine && (s.estado === 'autorizada' || s.estado === 'error');
       if (!(gerente() && c && !c.error) && !faltaIne) h += '<div id="d_revision"></div>';
 
+      /* ¿Pasa buró? Decisión del que revisa; si viene de CobraPro, allá se rechaza o se marca solo */
+      if (c && !c.error){
+        if (s.decision){
+          var okD = s.decision === 'pasa';
+          h += '<div style="margin-top:16px;padding:14px;border-radius:12px;border:2px solid ' + (okD ? '#10B981' : '#EF4444') + ';background:' + (okD ? '#ECFDF5' : '#FEF2F2') + '">' +
+            '<b style="font-size:15px;color:' + (okD ? '#047857' : '#B91C1C') + '">' + (okD ? '✓ Pasa buró' : '✗ No pasa buró') + '</b>' +
+            (s.decision_motivo ? '<div style="font-size:13px;margin-top:4px">' + esc(s.decision_motivo) + '</div>' : '') +
+            '<div style="font-size:12px;color:#64748B;margin-top:4px">Decidió ' + esc(s.decision_por || '') + ' · ' + fecha(s.decision_en) +
+            (s.decision_cobrapro ? ' · ' + esc(s.decision_cobrapro) : '') + '</div></div>';
+        } else {
+          h += '<div style="margin-top:16px;padding:14px;border-radius:12px;border:2px solid #4F46E5;background:#F5F3FF">' +
+            '<b style="font-size:15px">¿Pasa buró?</b>' +
+            '<div style="font-size:12.5px;color:#64748B;margin:4px 0 10px">Si no pasa, la solicitud de crédito en CobraPro se rechaza sola y se avisa al cobrador y a la sucursal.</div>' +
+            '<div style="display:flex;gap:10px"><button id="d_pasa" style="flex:1;background:linear-gradient(135deg,#059669,#10B981)">Sí, pasa</button>' +
+            '<button id="d_nopasa" style="flex:1;background:linear-gradient(135deg,#DC2626,#EF4444)">No pasa</button></div></div>';
+        }
+      }
+
       if (faltaIne){
         h += '<div style="margin-top:16px;padding:15px;border:2px solid #D97706;border-radius:12px;background:#FFFBEB">' +
           '<b style="font-size:14px">Falta la INE del cliente</b>' +
@@ -1162,6 +1180,20 @@
 
     var de = $('d_editar');
     if (de) de.addEventListener('click', editarDatos);
+
+    function decide(pasa){
+      var motivo = '';
+      if (!pasa){
+        motivo = prompt('¿Por qué no pasa? (se le mostrará a la sucursal y al cobrador)', 'Historial con atrasos');
+        if (motivo === null) return;
+        if (motivo.trim().length < 3){ alert('Escribe el motivo.'); return; }
+      } else if (!confirm('¿Confirmas que PASA buró?')) return;
+      api('/api/solicitudes/' + actual + '/decision', {method:'POST', body:{pasa: pasa, motivo: motivo}})
+        .then(function(r){ abre(actual); lista(); if (r.cobrapro) setTimeout(function(){ msg('d_msg', 'Decisión guardada · ' + r.cobrapro, 'ok'); }, 400); })
+        .catch(function(e){ msg('d_msg', e.message, 'err'); });
+    }
+    var dp = $('d_pasa'); if (dp) dp.addEventListener('click', function(){ decide(true); });
+    var dn = $('d_nopasa'); if (dn) dn.addEventListener('click', function(){ decide(false); });
 
     var dx = $('d_cancelar');
     if (dx) dx.addEventListener('click', function(){

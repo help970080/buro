@@ -334,6 +334,9 @@ async function initDB() {
   await q('ALTER TABLE buro_consultas ADD COLUMN IF NOT EXISTS usuario TEXT');
   await q('ALTER TABLE buro_solicitudes ADD COLUMN IF NOT EXISTS editada_por TEXT');
   await q('ALTER TABLE buro_solicitudes ADD COLUMN IF NOT EXISTS cancelada_por TEXT');
+  for (const col of ['decision TEXT', 'decision_por TEXT', 'decision_en TIMESTAMPTZ', 'decision_motivo TEXT', 'decision_cobrapro TEXT']) {
+    await q('ALTER TABLE buro_solicitudes ADD COLUMN IF NOT EXISTS ' + col);
+  }
   await q('ALTER TABLE buro_solicitudes ADD COLUMN IF NOT EXISTS cancelada TIMESTAMPTZ');
   /* Autorización firmada en la solicitud de crédito de CobraPro, en espera de que se cree la solicitud de buró */
   await q(`CREATE TABLE IF NOT EXISTS buro_aut_pre (
@@ -1557,6 +1560,45 @@ app.get('/api/solicitudes/:id/revisar', auth, alcance, async (req, res) => {
       faltan: faltan,
       estado_clave: claveEstado(r.rows[0].estado_dom)
     });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* ¿Pasa buró? Decisión del que revisa. Si la solicitud vino de CobraPro, se le avisa (firmado) para que
+   rechace en automático la solicitud de crédito pendiente de ese cliente o la marque como "pasa". */
+const COBRAPRO_URL = (process.env.COBRAPRO_URL || 'https://cobrapro.legaxia.uk').replace(/\/+$/, '');
+async function avisaCobraPro(sol, pasa, motivo, por) {
+  if (!SSO_SECRET) return 'sin BURO_SSO_SECRET';
+  const usuario = [sol.creada_por, por.u].map(x => String(x || '')).find(x => /^cp\d+-/.test(x));
+  if (!usuario || !sol.curp) return 'no viene de CobraPro';
+  const payload = JSON.stringify({ usuario, curp: sol.curp, pasa, motivo, por: por.n || por.u, folio: sol.folio });
+  const ts = String(Date.now());
+  const firma = crypto.createHmac('sha256', SSO_SECRET).update(ts + '.' + payload).digest('hex');
+  try {
+    const r = await fetch(COBRAPRO_URL + '/api/buro/dictamen', { method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-ts': ts, 'x-firma': firma },
+      body: JSON.stringify({ payload }), signal: AbortSignal.timeout(6000) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return 'CobraPro: ' + (j.error || r.status);
+    return j.afectadas ? (pasa ? 'marcada como pasa en CobraPro' : 'rechazada en CobraPro') : 'sin solicitud pendiente en CobraPro';
+  } catch (e) { return 'CobraPro no respondió'; }
+}
+app.post('/api/solicitudes/:id/decision', auth, alcance, async (req, res) => {
+  try {
+    const r = await q('SELECT * FROM buro_solicitudes WHERE id=$1', [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'No existe esa solicitud.' });
+    const s = r.rows[0];
+    if (s.decision) return res.status(409).json({ error: 'Ya se decidió: ' + (s.decision === 'pasa' ? 'pasa' : 'no pasa') + '.' });
+    const c = await q('SELECT 1 FROM buro_consultas WHERE solicitud_id=$1 AND error IS NULL LIMIT 1', [req.params.id]);
+    if (!c.rows.length) return res.status(409).json({ error: 'Primero consulta el buró.' });
+    const pasa = req.body.pasa === true;
+    const motivo = String(req.body.motivo || '').trim().slice(0, 200);
+    if (!pasa && motivo.length < 3) return res.status(400).json({ error: 'Escribe el motivo por el que no pasa.' });
+    const aviso = await avisaCobraPro(s, pasa, motivo, req.user);
+    await q(`UPDATE buro_solicitudes SET decision=$1, decision_por=$2, decision_en=NOW(), decision_motivo=$3, decision_cobrapro=$4,
+             actualizada=NOW() WHERE id=$5`, [pasa ? 'pasa' : 'no_pasa', req.user.u, motivo, aviso, req.params.id]);
+    res.json({ ok: true, cobrapro: aviso });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
