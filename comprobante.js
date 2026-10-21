@@ -144,8 +144,9 @@ function hoja(doc, d) {
   let yc = y + 4;
   doc.font('Helvetica').fontSize(8.5).fillColor(TINTA);
   doc.text('Recabó: ' + (d.funcionario || '—'), xd, yc); yc += 13;
-  doc.text('Modo: ' + (d.modo === 'presencial'
-    ? 'Firma en dispositivo, cliente presente'
+  doc.text('Modo: ' + (d.modo === 'presencial' ? 'Firma en dispositivo, cliente presente'
+    : d.modo === 'cobrapro' ? 'Firma autógrafa digital en la solicitud de crédito (CobraPro), cliente presente'
+    : d.modo === 'papel' ? 'Hoja firmada con pluma, digitalizada'
     : 'Firma en dispositivo, autenticado por folio y código'), xd, yc, { width: ANCHO - 280 });
   yc = doc.y + 3;
   doc.text('Dirección IP: ' + (d.ip || '—'), xd, yc); yc += 13;

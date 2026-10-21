@@ -333,6 +333,9 @@ async function initDB() {
   }
   await q('ALTER TABLE buro_consultas ADD COLUMN IF NOT EXISTS usuario TEXT');
   await q('ALTER TABLE buro_solicitudes ADD COLUMN IF NOT EXISTS editada_por TEXT');
+  /* Autorización firmada en la solicitud de crédito de CobraPro, en espera de que se cree la solicitud de buró */
+  await q(`CREATE TABLE IF NOT EXISTS buro_aut_pre (
+    id TEXT PRIMARY KEY, usuario TEXT, curp TEXT, aut JSONB, exp TIMESTAMPTZ)`);
   await q('ALTER TABLE buro_solicitudes ADD COLUMN IF NOT EXISTS editada TIMESTAMPTZ');
   await q(`CREATE INDEX IF NOT EXISTS ix_cons_usuario ON buro_consultas(usuario, mes)`);
   await q(`CREATE INDEX IF NOT EXISTS ix_sol_agencia ON buro_solicitudes((UPPER(TRIM(agencia))))`);
@@ -553,6 +556,11 @@ app.post('/api/sso/consultados', async (req, res) => {
   }
 });
 
+/* Texto vigente de la autorización: CobraPro lo muestra en su solicitud de crédito */
+app.get('/api/autorizacion/texto', (req, res) => {
+  res.json({ texto: TEXTO_AUTORIZACION, hash: HASH_AUTORIZACION });
+});
+
 app.post('/api/sso/canjear', async (req, res) => {
   try {
     const id = String((req.body && req.body.pase) || '');
@@ -562,6 +570,22 @@ app.post('/api/sso/canjear', async (req, res) => {
     const r = await q('SELECT * FROM buro_usuarios WHERE usuario=$1 AND activo=TRUE', [p.usuario]);
     if (!r.rows.length) return res.status(403).json({ error: 'Tu acceso a buró fue desactivado.' });
     const u = r.rows[0];
+    /* Autorización de la solicitud de CobraPro: se guarda AQUÍ (servidor) y al panel solo va un id.
+       Así nadie puede fabricar una autorización desde el navegador. */
+    if (p.pre && p.pre.aut) {
+      const a = p.pre.aut;
+      const ok = a.hash === HASH_AUTORIZACION && /^data:image\/(png|jpe?g|webp);base64,/.test(String(a.firma || '')) &&
+        String(a.firma).length < 2000000 && a.aceptada && p.pre.curp;
+      if (ok) {
+        const aid = crypto.randomBytes(18).toString('base64url');
+        await q("DELETE FROM buro_aut_pre WHERE exp < NOW()");
+        await q("INSERT INTO buro_aut_pre(id, usuario, curp, aut, exp) VALUES ($1,$2,$3,$4,NOW() + INTERVAL '12 hours')",
+          [aid, u.usuario, String(p.pre.curp).toUpperCase().trim(), JSON.stringify(a)]);
+        p.pre.aut = { id: aid, aceptada: a.aceptada, por: a.por || '', folio: a.folio || '' };
+      } else {
+        p.pre.aut = null;
+      }
+    }
     q('UPDATE buro_usuarios SET ultimo_acceso=NOW() WHERE id=$1', [u.id]).catch(() => {});
     res.json({ token: firmaJWT({ t: 'equipo', u: u.usuario, n: u.nombre }, 12), nombre: u.nombre, usuario: u.usuario,
       rol: u.rol || 'admin', agencia: u.agencia || '', pre: p.pre });
@@ -904,7 +928,32 @@ app.post('/api/solicitudes', auth, async (req, res) => {
         b.calle || '', b.colonia || '', b.municipio || '', b.estado_dom || '', (b.cp || '').replace(/\D/g, ''),
         req.user.u, exp]
     );
-    res.json(r.rows[0]);
+    let sol = r.rows[0];
+    /* Firmó la autorización de buró en la solicitud de crédito de CobraPro: queda autorizada sin subir hoja */
+    if (b.aut_id) {
+      const ap = await q('SELECT * FROM buro_aut_pre WHERE id=$1 AND usuario=$2 AND exp > NOW()', [String(b.aut_id), req.user.u]);
+      if (ap.rows.length && ap.rows[0].curp && ap.rows[0].curp === sol.curp) {
+        const a = ap.rows[0].aut || {};
+        const vence = new Date(a.aceptada); vence.setFullYear(vence.getFullYear() + 3);
+        await q(
+          `INSERT INTO buro_autorizaciones(solicitud_id, texto_hash, texto, firma, ip, agente, datos,
+             lugar, telefono, funcionario, modo, vence, aceptada)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+          [sol.id, HASH_AUTORIZACION, TEXTO_AUTORIZACION, a.firma, String(a.ip || '').slice(0, 60),
+            ('Solicitud de crédito CobraPro ' + (a.folio || '') + ' · ' + String(a.agente || '')).slice(0, 300),
+            JSON.stringify({ nombre: sol.nombre, apellido_p: sol.apellido_p, apellido_m: sol.apellido_m, curp: sol.curp,
+              rfc: sol.rfc, fecha_nac: sol.fecha_nac, calle: sol.calle, colonia: sol.colonia, municipio: sol.municipio,
+              estado_dom: sol.estado_dom, cp: sol.cp }),
+            [sol.municipio, sol.estado_dom].filter(Boolean).join(', '), sol.telefono || '',
+            String(a.por || req.user.u).slice(0, 90), 'cobrapro', vence.toISOString().slice(0, 10), a.aceptada]);
+        await q('DELETE FROM buro_aut_pre WHERE id=$1', [String(b.aut_id)]);
+        const u2 = await q("UPDATE buro_solicitudes SET estado='autorizada', actualizada=NOW() WHERE id=$1 RETURNING *", [sol.id]);
+        sol = Object.assign(u2.rows[0], { aut_cobrapro: true });
+      } else {
+        sol.aut_cobrapro_error = 'La autorización de CobraPro no aplica (venció o la CURP cambió). Recábala con folio y código.';
+      }
+    }
+    res.json(sol);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

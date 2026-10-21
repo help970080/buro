@@ -142,7 +142,8 @@
   .rol-tag{font-size:11px;letter-spacing:.08em;text-transform:uppercase;font-weight:700;background:linear-gradient(135deg,#22D3EE,#0EA5A4);padding:4px 10px;border-radius:20px}
   table.usuarios input,table.usuarios select{padding:6px 8px;font-size:13px}
   .scroll-x{overflow-x:auto}
-  @media(max-width:760px){ .rejilla{grid-template-columns:1fr} .ocultar-cel{display:none} header{padding:10px 14px} .tarjeta{padding:16px} }
+  @media(max-width:760px){ .rejilla{grid-template-columns:1fr} .ocultar-cel{display:none} header{padding:10px 14px} .tarjeta{padding:16px}
+    .folio-grande{font-size:24px;letter-spacing:.08em;padding:12px 6px;min-width:0} }
 </style>
 </head>
 <body>
@@ -266,7 +267,7 @@
       <button class="claro chico" id="brefresca">Actualizar</button>
       <button class="claro chico solo-admin" id="bexporta">Exportar lista (CSV)</button>
       <button class="claro chico solo-admin" id="bexportapdf">Exportar comprobantes (PDF)</button>
-      <button class="claro chico" id="bhojas">Imprimir hojas en blanco</button>
+      <button class="claro chico oculto" id="bhojas">Imprimir hojas en blanco</button>
     </div>
     <div class="filtros">
       <select id="f_agencia" class="solo-admin"><option value="">Todas las agencias</option></select>
@@ -494,6 +495,7 @@
 
   /* ---- Lectura de INE ---- */
   var ineCreacion = null;
+  var autPre = null;   /* autorización firmada en la solicitud de CobraPro (id guardado en el servidor) */
   $('n_ine').addEventListener('change', function(){
     var f = this.files && this.files[0];
     ineCreacion = null;
@@ -557,21 +559,32 @@
       nombre: $('n_nombre').value, apellido_p: $('n_ap').value, apellido_m: $('n_am').value,
       curp: $('n_curp').value, fecha_nac: $('n_nac').value, cp: $('n_cp').value,
       rfc: $('n_rfc').value, calle: $('n_calle').value, colonia: $('n_col').value,
-      municipio: $('n_mun').value, estado_dom: $('n_edo').value
+      municipio: $('n_mun').value, estado_dom: $('n_edo').value, aut_id: autPre || undefined
     };
     $('bnueva').disabled = true;
     api('/api/solicitudes', {method:'POST', body:cuerpo})
     .then(function(s){
       $('bnueva').disabled = false;
       ['n_tel','n_agencia','n_nombre','n_ap','n_am','n_curp','n_nac','n_cp','n_ine','n_rfc','n_calle','n_col','n_mun','n_edo'].forEach(function(x){ $(x).value=''; });
-      var ineSube = ineCreacion; ineCreacion = null;
+      var ineSube = ineCreacion; ineCreacion = null; autPre = null;
       if (gerente()) $('n_agencia').value = MI_AGENCIA;
       $('n_rfc').dataset.tocado = ''; $('n_rfc_nota').textContent = '';
       msg('mnueva','');
+      if (s.aut_cobrapro){
+        /* Ya viene autorizada por la firma de la solicitud de CobraPro: directo a consultar */
+        actual = s.id;
+        var subeIne = ineSube
+          ? api('/api/solicitudes/' + s.id + '/documento', {method:'POST', body:{tipo:'ine', imagen: ineSube}}).catch(function(){})
+          : Promise.resolve();
+        subeIne.then(function(){ abre(s.id); });
+        lista();
+        return;
+      }
       muestraFolio(s);
+      if (s.aut_cobrapro_error) msg('mllamar', s.aut_cobrapro_error, 'err');
       if (ineSube){
         api('/api/solicitudes/' + s.id + '/documento', {method:'POST', body:{tipo:'ine', imagen: ineSube}})
-          .then(function(){ msg('mllamar','INE guardada como evidencia.','ok'); })
+          .then(function(){ if (!s.aut_cobrapro_error) msg('mllamar','INE guardada como evidencia.','ok'); })
           .catch(function(e){ msg('mllamar','No se guardó la INE: ' + e.message + ' Súbela desde la solicitud.','err'); });
       }
       lista();
@@ -591,7 +604,7 @@
       '<p style="color:#6B7A88;font-size:13px">Vence en 72 horas. Cliente: <b>' +
         esc([s.nombre,s.apellido_p,s.apellido_m].filter(Boolean).join(' ')) +
         '</b> · Tel: ' + esc(s.telefono) + '</p>' +
-      '<button id="bfotos" style="width:100%;margin-top:14px">El cliente está aquí — subir hoja firmada e INE</button>' +
+      '<button id="bfotos" style="width:100%;margin-top:14px">Subir la INE del cliente</button>' +
       '<button class="claro" id="bllamar" style="width:100%;margin-top:8px">No está: llamarle y dictarle el código</button>' +
       '<div id="mllamar" class="msg"></div>';
     $('detalle').classList.remove('oculto');
@@ -634,7 +647,7 @@
       if (!$('d_docs')) return;
       var h = '';
       var solo = $('d_docs').getAttribute('data-solo');
-      if (solo && d[solo]) { abre(actual); return; }
+      if (solo && d[solo] && $('d_docs').getAttribute('data-volver')) { abre(actual); return; }
       (solo ? [solo] : ['ine','hoja']).forEach(function(t){
         var doc = d[t];
         h += '<div style="padding:11px;border:1px solid ' +
@@ -887,15 +900,15 @@
         h += '<h2 style="margin-top:18px;font-size:13px;letter-spacing:.09em;text-transform:uppercase;color:#6B7A88">Falta la autorización del cliente</h2>' +
 
           '<div style="margin-top:10px;padding:15px;border:2px solid #12263A;border-radius:9px;background:#fff">' +
-          '<b style="font-size:14px">El cliente está aquí (o te mandó las fotos)</b>' +
+          '<b style="font-size:14px">INE del cliente (evidencia)</b>' +
           '<div style="font-size:12.5px;color:#6B7A88;margin:5px 0 12px">' +
-          'Toma foto de la hoja de autorización firmada y de su INE. Revísalas y márcalas correctas. ' +
-          '¿Sin hojas? Imprime hojas en blanco desde la lista de solicitudes.</div>' +
-          '<div id="d_docs">Cargando documentos...</div>' +
+          'La autorización se firma en la solicitud de crédito de CobraPro (casilla de Buró). ' +
+          'Si no viene de CobraPro, el cliente la firma con folio y código en su celular o en el tuyo.</div>' +
+          '<div id="d_docs" data-solo="ine">Cargando documentos...</div>' +
           '<div id="d_mdocs" class="msg"></div></div>' +
 
           '<div style="margin-top:12px;padding:15px;border:1px solid #D8D2C6;border-radius:9px;background:#FBFAF7">' +
-          '<b style="font-size:13px">El cliente no está: que firme a distancia</b>' +
+          '<b style="font-size:13px">Sin solicitud de CobraPro: firma con folio y código</b>' +
           '<div style="font-size:12.5px;color:#6B7A88;margin:5px 0 10px">' +
           'Díctale el folio y el código. La INE se sube aquí antes de consultar.</div>' +
           '<div style="display:flex;gap:10px;margin-top:12px">' +
@@ -1055,7 +1068,7 @@
         h += '<div style="margin-top:16px;padding:15px;border:2px solid #D97706;border-radius:12px;background:#FFFBEB">' +
           '<b style="font-size:14px">Falta la INE del cliente</b>' +
           '<div style="font-size:12.5px;color:#92400E;margin:5px 0 10px">Súbela para resguardar la evidencia. Después se habilita la consulta.</div>' +
-          '<div id="d_docs" data-solo="ine">Cargando...</div><div id="d_mdocs" class="msg"></div></div>';
+          '<div id="d_docs" data-solo="ine" data-volver="1">Cargando...</div><div id="d_mdocs" class="msg"></div></div>';
       } else if (d.modo_reporte && (!c || c.error)){
         if (s.estado === 'autorizada' || s.estado === 'error'){
           h += '<div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">' +
@@ -1410,8 +1423,11 @@
       for (var i = 0; i < sel.options.length; i++){ if (nrm(sel.options[i].text) === obj || nrm(sel.options[i].value) === obj){ sel.selectedIndex = i; break; } }
     }
     if (p.ine && /^data:image\//.test(p.ine)) ineCreacion = p.ine;
+    autPre = (p.aut && p.aut.id) || null;
     try { calculaRFCPanel(); } catch(e){}
-    msg('mnueva', 'Datos traídos de CobraPro' + (ineCreacion ? ' (con foto de la INE)' : '') + '. Revísalos y completa lo que falte antes de crear.', 'ok');
+    msg('mnueva', 'Datos traídos de CobraPro' + (ineCreacion ? ' (con foto de la INE)' : '') +
+      (autPre ? '. Incluye la autorización de Buró firmada en la solicitud de crédito: al crear queda lista para consultar' : '') +
+      '. Revísalos y completa lo que falte antes de crear.', 'ok');
     var t = $('n_tel'); if (t && t.scrollIntoView) t.scrollIntoView({behavior:'smooth', block:'center'});
   }
   var pase = (location.hash.match(/pase=([\w-]+)/) || [])[1];
