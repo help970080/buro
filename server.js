@@ -1572,7 +1572,7 @@ async function avisaCobraPro(sol, pasa, motivo, por) {
   if (!SSO_SECRET) return 'sin BURO_SSO_SECRET';
   const usuario = [sol.creada_por, por.u].map(x => String(x || '')).find(x => /^cp\d+-/.test(x));
   if (!usuario || !sol.curp) return 'no viene de CobraPro';
-  const payload = JSON.stringify({ usuario, curp: sol.curp, pasa, motivo, por: por.n || por.u, folio: sol.folio });
+  const payload = JSON.stringify({ usuario, curp: sol.curp, pasa, por: por.n || por.u, folio: sol.folio });
   const ts = String(Date.now());
   const firma = crypto.createHmac('sha256', SSO_SECRET).update(ts + '.' + payload).digest('hex');
   try {
@@ -1593,8 +1593,7 @@ app.post('/api/solicitudes/:id/decision', auth, alcance, async (req, res) => {
     const c = await q('SELECT 1 FROM buro_consultas WHERE solicitud_id=$1 AND error IS NULL LIMIT 1', [req.params.id]);
     if (!c.rows.length) return res.status(409).json({ error: 'Primero consulta el buró.' });
     const pasa = req.body.pasa === true;
-    const motivo = String(req.body.motivo || '').trim().slice(0, 200);
-    if (!pasa && motivo.length < 3) return res.status(400).json({ error: 'Escribe el motivo por el que no pasa.' });
+    const motivo = '';   // el motivo de un rechazo de buró no se registra ni se comparte
     const aviso = await avisaCobraPro(s, pasa, motivo, req.user);
     await q(`UPDATE buro_solicitudes SET decision=$1, decision_por=$2, decision_en=NOW(), decision_motivo=$3, decision_cobrapro=$4,
              actualizada=NOW() WHERE id=$5`, [pasa ? 'pasa' : 'no_pasa', req.user.u, motivo, aviso, req.params.id]);

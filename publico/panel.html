@@ -1085,7 +1085,7 @@
         } else {
           h += '<div style="margin-top:16px;padding:14px;border-radius:12px;border:2px solid #4F46E5;background:#F5F3FF">' +
             '<b style="font-size:15px">¿Pasa buró?</b>' +
-            '<div style="font-size:12.5px;color:#64748B;margin:4px 0 10px">Si no pasa, la solicitud de crédito en CobraPro se rechaza sola y se avisa al cobrador y a la sucursal.</div>' +
+            '<div style="font-size:12.5px;color:#64748B;margin:4px 0 10px">Si no pasa, la solicitud de crédito en CobraPro se rechaza sola. No se registra ni se comparte el motivo.</div>' +
             '<div style="display:flex;gap:10px"><button id="d_pasa" style="flex:1;background:linear-gradient(135deg,#059669,#10B981)">Sí, pasa</button>' +
             '<button id="d_nopasa" style="flex:1;background:linear-gradient(135deg,#DC2626,#EF4444)">No pasa</button></div></div>';
         }
@@ -1182,13 +1182,8 @@
     if (de) de.addEventListener('click', editarDatos);
 
     function decide(pasa){
-      var motivo = '';
-      if (!pasa){
-        motivo = prompt('¿Por qué no pasa? (se le mostrará a la sucursal y al cobrador)', 'Historial con atrasos');
-        if (motivo === null) return;
-        if (motivo.trim().length < 3){ alert('Escribe el motivo.'); return; }
-      } else if (!confirm('¿Confirmas que PASA buró?')) return;
-      api('/api/solicitudes/' + actual + '/decision', {method:'POST', body:{pasa: pasa, motivo: motivo}})
+      if (!confirm(pasa ? '¿Confirmas que PASA buró?' : '¿Confirmas que NO PASA buró? La solicitud de crédito se rechaza.')) return;
+      api('/api/solicitudes/' + actual + '/decision', {method:'POST', body:{pasa: pasa}})
         .then(function(r){ abre(actual); lista(); if (r.cobrapro) setTimeout(function(){ msg('d_msg', 'Decisión guardada · ' + r.cobrapro, 'ok'); }, 400); })
         .catch(function(e){ msg('d_msg', e.message, 'err'); });
     }
