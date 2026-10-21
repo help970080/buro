@@ -188,7 +188,7 @@
 </div>
 
 <header class="oculto" id="cab">
-  <div class="marca">BURÓ · LMV CREDIA</div>
+  <div class="marca" id="marcaAg">BURÓ</div>
   <span class="rol-tag" id="rolTag"></span>
   <div class="cuota" id="cuota">—</div>
   <button id="salir">Salir</button>
@@ -438,13 +438,17 @@
       ROL = c.rol || 'admin'; MI_AGENCIA = c.agencia || '';
       var t;
       if (gerente() && c.mia){
-        t = 'Consultas de la agencia: <b>' + c.mia.usadas + '</b> / ' + c.mia.tope + ' · ' + esc(MI_AGENCIA);
+        t = 'Consultas de la agencia: <b>' + c.mia.usadas + '</b> / ' + c.mia.tope + ' · ' + c.mes;
       } else {
         t = '<b>' + c.usadas + '</b> / ' + c.incluidas + ' consultas · ' + c.mes;
         if (c.excedidas > 0) t += ' · <b style="color:#FFD9A0">' + c.excedidas + ' extra</b>';
       }
       $('cuota').innerHTML = t;
       $('rolTag').textContent = gerente() ? 'Gerente' : 'Administrador';
+      /* Encabezado con la agencia del usuario para no confundirse de empresa */
+      var ag = gerente() ? (MI_AGENCIA || '') : 'LMV CREDIA';
+      $('marcaAg').textContent = 'BURÓ' + (ag ? ' · ' + ag.toUpperCase() : '');
+      document.title = 'Panel de buró' + (ag ? ' · ' + ag : '');
     }).catch(function(e){ $('cuota').textContent = e.message; });
   }
 
