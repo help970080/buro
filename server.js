@@ -333,6 +333,8 @@ async function initDB() {
   }
   await q('ALTER TABLE buro_consultas ADD COLUMN IF NOT EXISTS usuario TEXT');
   await q('ALTER TABLE buro_solicitudes ADD COLUMN IF NOT EXISTS editada_por TEXT');
+  await q('ALTER TABLE buro_solicitudes ADD COLUMN IF NOT EXISTS cancelada_por TEXT');
+  await q('ALTER TABLE buro_solicitudes ADD COLUMN IF NOT EXISTS cancelada TIMESTAMPTZ');
   /* Autorización firmada en la solicitud de crédito de CobraPro, en espera de que se cree la solicitud de buró */
   await q(`CREATE TABLE IF NOT EXISTS buro_aut_pre (
     id TEXT PRIMARY KEY, usuario TEXT, curp TEXT, aut JSONB, exp TIMESTAMPTZ)`);
@@ -684,7 +686,7 @@ app.get('/api/bitacora', auth, soloAdmin, async (req, res) => {
 app.get('/api/tablero', auth, async (req, res) => {
   try {
     const params = [];
-    let w = 'WHERE 1=1';
+    let w = "WHERE s.estado <> 'cancelada'";
     if (esGerente(req)) { params.push(normAg(req.user.agencia)); w += ` AND UPPER(TRIM(s.agencia))=$${params.length}`; }
     else if (req.query.agencia) { params.push(normAg(req.query.agencia)); w += ` AND UPPER(TRIM(s.agencia))=$${params.length}`; }
     if (/^\d{4}-\d{2}-\d{2}$/.test(req.query.desde || '')) { params.push(req.query.desde); w += ` AND (s.creada AT TIME ZONE 'America/Mexico_City')::date >= $${params.length}`; }
@@ -1019,6 +1021,7 @@ app.get('/api/solicitudes', auth, async (req, res) => {
     const params = [];
     let w = 'WHERE 1=1';
     if (est) { params.push(est); w += ` AND s.estado=$${params.length}`; }
+    else w += " AND s.estado <> 'cancelada'";
     if (esGerente(req)) { params.push(normAg(req.user.agencia)); w += ` AND UPPER(TRIM(s.agencia))=$${params.length}`; }
     else if (req.query.agencia) { params.push(normAg(req.query.agencia)); w += ` AND UPPER(TRIM(s.agencia))=$${params.length}`; }
     if (/^\d{4}-\d{2}-\d{2}$/.test(req.query.desde || '')) { params.push(req.query.desde); w += ` AND (s.creada AT TIME ZONE 'America/Mexico_City')::date >= $${params.length}`; }
@@ -1144,6 +1147,7 @@ app.post('/api/acceso', async (req, res) => {
     if (s.exp_acceso && new Date(s.exp_acceso) < new Date()) {
       return res.status(410).json({ error: 'Este folio ya venció. Pide uno nuevo a quien te atendió.' });
     }
+    if (s.estado === 'cancelada') return res.status(410).json({ error: 'Esta solicitud fue cancelada. Pide un folio nuevo a quien te atendió.' });
     if (s.estado === 'autorizada' || s.estado === 'consultada' || s.estado === 'entregada') {
       return res.status(409).json({ error: 'Esta solicitud ya fue completada. No necesitas hacer nada más.' });
     }
@@ -1227,8 +1231,8 @@ app.post('/api/autorizar', authCliente, async (req, res) => {
 
     const s = await q('SELECT * FROM buro_solicitudes WHERE id=$1', [req.sol]);
     if (!s.rows.length) return res.status(404).json({ error: 'No existe esa solicitud.' });
-    if (['autorizada', 'consultada', 'entregada'].indexOf(s.rows[0].estado) >= 0) {
-      return res.status(409).json({ error: 'Esta solicitud ya fue completada.' });
+    if (['autorizada', 'consultada', 'entregada', 'cancelada'].indexOf(s.rows[0].estado) >= 0) {
+      return res.status(409).json({ error: 'Esta solicitud ya fue completada o cancelada.' });
     }
 
     const datos = {
@@ -1558,11 +1562,30 @@ app.get('/api/solicitudes/:id/revisar', auth, alcance, async (req, res) => {
   }
 });
 
+/* Cancelar una solicitud que nunca se consultó (pruebas o duplicadas). No se borra: queda el rastro. */
+app.post('/api/solicitudes/:id/cancelar', auth, alcance, async (req, res) => {
+  try {
+    const r = await q('SELECT estado FROM buro_solicitudes WHERE id=$1', [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'No existe esa solicitud.' });
+    if (['consultada', 'entregada', 'cancelada'].indexOf(r.rows[0].estado) >= 0) {
+      return res.status(409).json({ error: 'Solo se cancelan solicitudes que no se han consultado.' });
+    }
+    const c = await q('SELECT 1 FROM buro_consultas WHERE solicitud_id=$1 AND error IS NULL LIMIT 1', [req.params.id]);
+    if (c.rows.length) return res.status(409).json({ error: 'Esta solicitud ya tiene una consulta; no se puede cancelar.' });
+    await q(`UPDATE buro_solicitudes SET estado='cancelada', cancelada_por=$1, cancelada=NOW(), exp_acceso=NOW(), actualizada=NOW()
+             WHERE id=$2`, [req.user.u, req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/solicitudes/:id/consultar', auth, alcance, async (req, res) => {
   try {
     let tipo = req.body.tipo === 'reporte' ? 'reporte' : 'score';
     const sr = await q('SELECT * FROM buro_solicitudes WHERE id=$1', [req.params.id]);
     if (!sr.rows.length) return res.status(404).json({ error: 'No existe esa solicitud.' });
+    if (sr.rows[0].estado === 'cancelada') return res.status(409).json({ error: 'Esta solicitud está cancelada.' });
     const soloReporte = soloReportePara(sr.rows[0], req.user.u);
     if (soloReporte) tipo = 'reporte';   // CREDIA: nunca score, para no cobrar doble (legaxia elige)
     const faltan = revisaDatos(sr.rows[0]).filter(f =>
@@ -1842,8 +1865,8 @@ app.post('/api/solicitudes/:id/firma-papel', auth, alcance, async (req, res) => 
     const r = await q('SELECT * FROM buro_solicitudes WHERE id=$1', [req.params.id]);
     if (!r.rows.length) return res.status(404).json({ error: 'No existe esa solicitud.' });
     const s = r.rows[0];
-    if (['autorizada', 'consultada', 'entregada'].indexOf(s.estado) >= 0) {
-      return res.status(409).json({ error: 'Esta solicitud ya tiene autorización registrada.' });
+    if (['autorizada', 'consultada', 'entregada', 'cancelada'].indexOf(s.estado) >= 0) {
+      return res.status(409).json({ error: 'Esta solicitud ya tiene autorización registrada o fue cancelada.' });
     }
 
     const faltan = [];

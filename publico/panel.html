@@ -67,6 +67,7 @@
   .pill.consultada{background:#D1FAE5;color:#047857}
   .pill.entregada{background:#EDE9FE;color:#6D28D9}
   .pill.error{background:#FEE2E2;color:#B91C1C}
+  .pill.cancelada{background:#F1F5F9;color:#64748B;text-decoration:line-through}
   .sem{display:inline-block;width:12px;height:12px;border-radius:50%;vertical-align:-1px;margin-right:6px}
   .sem.verde{background:#10B981;box-shadow:0 0 0 3px rgba(16,185,129,.18)}
   .sem.ambar{background:#F59E0B;box-shadow:0 0 0 3px rgba(245,158,11,.2)}
@@ -263,6 +264,7 @@
         <option value="consultada">Consultadas</option>
         <option value="entregada">Entregadas</option>
         <option value="error">Con error</option>
+        <option value="cancelada">Canceladas</option>
       </select>
       <button class="claro chico" id="brefresca">Actualizar</button>
       <button class="claro chico solo-admin" id="bexporta">Exportar lista (CSV)</button>
@@ -893,6 +895,9 @@
         '<div class="dato"><span>Agencia</span><span>' + esc(s.agencia || '—') + '</span></div>' +
         '<div class="dato"><span>Estado</span><span><span class="pill ' + esc(s.estado) + '">' + esc(s.estado) + '</span></span></div>';
       var editable = ['nueva','abierta','autorizada','error'].indexOf(s.estado) >= 0;
+      if (s.estado === 'cancelada'){
+        h += '<div class="aviso-sim" style="margin-top:12px">Cancelada por ' + esc(s.cancelada_por || '—') + ' el ' + fecha(s.cancelada) + '. No se consultó.</div>';
+      }
       if (editable){
         h += '<div class="dato"><span>Domicilio</span><span style="font-weight:600">' +
           esc([s.calle, s.colonia, s.municipio, s.estado_dom, s.cp].filter(Boolean).join(', ') || '—') + '</span></div>' +
@@ -1126,6 +1131,9 @@
           '<button class="claro" id="d_copiar" style="width:100%;margin-top:8px">Copiar enlace</button>';
       }
 
+      if (editable && !(d.consultas || []).some(function(x){ return !x.error; })){
+        h += '<button class="claro" id="d_cancelar" style="width:100%;margin-top:18px;color:#B91C1C;border-color:#FECACA">Cancelar solicitud (prueba o duplicada)</button>';
+      }
       h += '<div id="d_msg" class="msg"></div>';
       $('d_cuerpo').innerHTML = h;
       $('detalle').classList.remove('oculto');
@@ -1154,6 +1162,14 @@
 
     var de = $('d_editar');
     if (de) de.addEventListener('click', editarDatos);
+
+    var dx = $('d_cancelar');
+    if (dx) dx.addEventListener('click', function(){
+      if (!confirm('¿Cancelar esta solicitud? Ya no se podrá firmar ni consultar. Queda registrada como cancelada.')) return;
+      api('/api/solicitudes/' + actual + '/cancelar', {method:'POST', body:{}})
+        .then(function(){ $('detalle').classList.add('oculto'); lista(); })
+        .catch(function(e){ msg('d_msg', e.message, 'err'); });
+    });
 
     /* Respuesta cruda de Moffin */
     var cr = $('d_crudo');
