@@ -1070,7 +1070,7 @@
         }
       }
 
-      var faltaIne = d.docs && !d.tiene_ine && (s.estado === 'autorizada' || s.estado === 'error');
+      var faltaIne = d.docs && !d.tiene_ine && !d.ine_opcional && (s.estado === 'autorizada' || s.estado === 'error');
       if (!(gerente() && c && !c.error) && !faltaIne) h += '<div id="d_revision"></div>';
 
       /* ¿Pasa buró? Decisión del que revisa; si viene de CobraPro, allá se rechaza o se marca solo */

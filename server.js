@@ -1089,6 +1089,7 @@ app.get('/api/solicitudes/:id', auth, alcance, async (req, res) => {
       dictamen: d.rows[0] || null,
       modo_reporte: soloReportePara(s.rows[0], req.user.u),
       tiene_ine: await tieneINE(req.params.id),
+      ine_opcional: LIBRES.includes(String(req.user.u || '').toLowerCase()),
       docs: docsListo(),
       rol: req.user.rol
     });
@@ -1637,7 +1638,8 @@ app.post('/api/solicitudes/:id/consultar', auth, alcance, async (req, res) => {
         faltan: faltan, sin_consumo: true
       });
     }
-    if (docsListo() && !(await tieneINE(req.params.id))) {
+    /* legaxia (BURO_LIBRE_USUARIOS) puede consultar sin subir la INE; la autorización firmada sigue siendo obligatoria */
+    if (docsListo() && !LIBRES.includes(String(req.user.u || '').toLowerCase()) && !(await tieneINE(req.params.id))) {
       return res.status(400).json({ error: 'Antes de consultar, sube la foto de la INE del cliente.', sin_consumo: true });
     }
     const c = await cuotaMes();
