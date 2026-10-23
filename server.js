@@ -731,6 +731,7 @@ app.get('/api/cuota', auth, async (req, res) => {
   try {
     const c = await cuotaMes();
     c.rol = req.user.rol;
+    c.libre = LIBRES.includes(String(req.user.u || '').toLowerCase());
     c.agencia = req.user.agencia;
     if (esGerente(req)) c.mia = { usadas: await usadasAgencia(req.user.agencia), tope: await topeAgencia(req.user.agencia) };
     res.json(c);
@@ -1664,6 +1665,27 @@ app.post('/api/solicitudes/:id/consultar', auth, alcance, async (req, res) => {
         error: 'El reporte completo cuesta más que el score. Confirma para continuar.',
         requiere_confirmacion: true
       });
+    }
+    /* legaxia recaba la autorización FUERA del sistema: al consultar declara que la tiene y queda registrada
+       como autorización "externa" (quién y cuándo). Sin esa declaración no se consulta. */
+    if (LIBRES.includes(String(req.user.u || '').toLowerCase())) {
+      const au = await q('SELECT 1 FROM buro_autorizaciones WHERE solicitud_id=$1 LIMIT 1', [req.params.id]);
+      if (!au.rows.length) {
+        if (req.body.aut_externa !== true) {
+          return res.status(409).json({ error: 'Confirma que tienes la autorización firmada del cliente.', requiere_aut_externa: true, sin_consumo: true });
+        }
+        const so = sr.rows[0];
+        const vence = new Date(); vence.setFullYear(vence.getFullYear() + 3);
+        await q(`INSERT INTO buro_autorizaciones(solicitud_id, texto_hash, texto, ip, agente, datos, lugar, telefono, funcionario, modo, vence)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'externa',$10)`,
+          [so.id, HASH_AUTORIZACION, TEXTO_AUTORIZACION,
+            (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString().split(',')[0].trim(),
+            'Autorización recabada fuera del sistema; declarada por ' + req.user.u,
+            JSON.stringify({ nombre: so.nombre, apellido_p: so.apellido_p, apellido_m: so.apellido_m, curp: so.curp, rfc: so.rfc,
+              fecha_nac: so.fecha_nac, calle: so.calle, colonia: so.colonia, municipio: so.municipio, estado_dom: so.estado_dom, cp: so.cp }),
+            [so.municipio, so.estado_dom].filter(Boolean).join(', '), so.telefono || '', req.user.u, vence.toISOString().slice(0, 10)]);
+        await q("UPDATE buro_solicitudes SET estado='autorizada', actualizada=NOW() WHERE id=$1 AND estado IN ('nueva','abierta')", [so.id]);
+      }
     }
     const out = await consultarMoffin(req.params.id, tipo, { usuario: req.user.u });
     if (esGerente(req)) { delete out.resumen; }

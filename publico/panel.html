@@ -345,7 +345,7 @@
   'use strict';
   var tok = localStorage.getItem('buro_token') || '';
   var actual = null;
-  var ROL = 'admin', MI_AGENCIA = '';
+  var ROL = 'admin', MI_AGENCIA = '', MI_LIBRE = false;
   function gerente(){ return ROL === 'gerente'; }
 
   function $(id){ return document.getElementById(id); }
@@ -437,7 +437,7 @@
 
   function cuota(){
     return api('/api/cuota').then(function(c){
-      ROL = c.rol || 'admin'; MI_AGENCIA = c.agencia || '';
+      ROL = c.rol || 'admin'; MI_AGENCIA = c.agencia || ''; MI_LIBRE = !!c.libre;
       var t;
       if (gerente() && c.mia){
         t = 'Consultas de la agencia: <b>' + c.mia.usadas + '</b> / ' + c.mia.tope + ' · ' + c.mes;
@@ -576,6 +576,7 @@
       if (gerente()) $('n_agencia').value = MI_AGENCIA;
       $('n_rfc').dataset.tocado = ''; $('n_rfc_nota').textContent = '';
       msg('mnueva','');
+      if (MI_LIBRE){ abre(s.id); lista(); return; }   /* legaxia: sin folio ni código, directo a consultar */
       if (s.aut_cobrapro){
         /* Ya viene autorizada por la firma de la solicitud de CobraPro: directo a consultar */
         actual = s.id;
@@ -905,7 +906,12 @@
           '<button class="claro" id="d_editar" style="width:100%;margin-top:10px">Editar / completar datos del cliente</button>';
       }
 
-      if (['nueva','abierta'].indexOf(s.estado) >= 0){
+      if (d.ine_opcional && ['nueva','abierta'].indexOf(s.estado) >= 0 && !(c && !c.error)){
+        /* legaxia: sin folio, código ni documentos; la autorización se recaba fuera del sistema */
+        h += '<div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">' +
+          '<button id="d_score">Consultar score</button>' +
+          '<button class="claro" id="d_reporte">Reporte completo (cuesta más)</button></div>';
+      } else if (['nueva','abierta'].indexOf(s.estado) >= 0){
         h += '<h2 style="margin-top:18px;font-size:13px;letter-spacing:.09em;text-transform:uppercase;color:#6B7A88">Falta la autorización del cliente</h2>' +
 
           '<div style="margin-top:10px;padding:15px;border:2px solid #12263A;border-radius:9px;background:#fff">' +
@@ -1297,13 +1303,17 @@
     }).catch(function(e){ alert(e.message); });
   }
 
-  function consulta(tipo, confirmado){
+  function consulta(tipo, confirmado, autExt){
     msg('d_msg','Consultando...','ok');
-    api('/api/solicitudes/' + actual + '/consultar', {method:'POST', body:{tipo:tipo, confirmado:confirmado}})
+    api('/api/solicitudes/' + actual + '/consultar', {method:'POST', body:{tipo:tipo, confirmado:confirmado, aut_externa: autExt === true}})
     .then(function(){ cuota(); abre(actual); lista(); })
     .catch(function(e){
+      if (/Confirma que tienes la autorización/.test(e.message)){
+        if (confirm('Confirmo que tengo la autorización firmada del cliente para consultar su historial en Buró (recabada fuera del sistema).\n\nQuedará registrado a tu nombre.')) { consulta(tipo, confirmado, true); return; }
+        msg('d_msg',''); return;
+      }
       if (!gerente() && /cuesta más|consultas del mes/i.test(e.message) && !/cobrar doble/.test(e.message)){
-        if (confirm(e.message + '\n\n¿Continuar de todos modos?')) { consulta(tipo, true); return; }
+        if (confirm(e.message + '\n\n¿Continuar de todos modos?')) { consulta(tipo, true, autExt); return; }
         msg('d_msg','');
         return;
       }

@@ -147,6 +147,7 @@ function hoja(doc, d) {
   doc.text('Modo: ' + (d.modo === 'presencial' ? 'Firma en dispositivo, cliente presente'
     : d.modo === 'cobrapro' ? 'Firma autógrafa digital en la solicitud de crédito (CobraPro), cliente presente'
     : d.modo === 'papel' ? 'Hoja firmada con pluma, digitalizada'
+    : d.modo === 'externa' ? 'Autorización recabada fuera del sistema (declarada por quien consultó)'
     : 'Firma en dispositivo, autenticado por folio y código'), xd, yc, { width: ANCHO - 280 });
   yc = doc.y + 3;
   doc.text('Dirección IP: ' + (d.ip || '—'), xd, yc); yc += 13;
